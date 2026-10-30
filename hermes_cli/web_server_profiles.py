@@ -395,7 +395,9 @@ def _aux_usage_rows(db, cutoff: float) -> list[dict[str, Any]]:
                    MAX(u.last_seen) as last_used_at
             FROM session_model_usage u
             JOIN sessions s ON s.id = u.session_id
-            WHERE s.started_at > ? AND u.task != ''
+            -- u.last_seen is when the auxiliary call actually happened; the
+            -- session's own start date says nothing about it.
+            WHERE u.last_seen > ? AND u.task != ''
             GROUP BY u.model, u.task, u.billing_provider
             ORDER BY SUM(u.input_tokens) + SUM(u.output_tokens) DESC
         """, (cutoff,))

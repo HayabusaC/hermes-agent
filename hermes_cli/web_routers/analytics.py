@@ -126,7 +126,7 @@ def _get_usage_analytics(days: int = 30, profile: Optional[str] = None):
         cutoff = time.time() - (days * 86400)
         # Local calendar day, per-row (DST-correct), the same day /insights uses (agent/insights.py).
         daily = _rows(db, """
-            SELECT date(started_at, 'unixepoch', 'localtime') as day,
+            SELECT date(COALESCE(last_activity_at, started_at), 'unixepoch', 'localtime') as day,
                    SUM(input_tokens) as input_tokens,
                    SUM(output_tokens) as output_tokens,
                    SUM(cache_read_tokens) as cache_read_tokens,
@@ -135,7 +135,7 @@ def _get_usage_analytics(days: int = 30, profile: Optional[str] = None):
                    COALESCE(SUM(actual_cost_usd), 0) as actual_cost,
                    COUNT(*) as sessions,
                    SUM(COALESCE(api_call_count, 0)) as api_calls
-            FROM sessions WHERE started_at > ?
+            FROM sessions WHERE COALESCE(last_activity_at, started_at) > ?
             GROUP BY day ORDER BY day
         """, cutoff)
 
@@ -159,7 +159,7 @@ def _get_usage_analytics(days: int = 30, profile: Optional[str] = None):
                                      ELSE COALESCE(estimated_cost_usd, 0) END), 0) as cost,
                    COUNT(*) as sessions,
                    SUM(COALESCE(api_call_count, 0)) as api_calls
-            FROM sessions WHERE started_at > ? AND model IS NOT NULL
+            FROM sessions WHERE COALESCE(last_activity_at, started_at) > ? AND model IS NOT NULL
             GROUP BY model, provider ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC
         """, cutoff)
 
@@ -184,7 +184,11 @@ def _get_usage_analytics(days: int = 30, profile: Optional[str] = None):
                                      ELSE COALESCE(estimated_cost_usd, 0) END), 0) as total_cost,
                    COUNT(*) as total_sessions,
                    SUM(COALESCE(api_call_count, 0)) as total_api_calls
-            FROM sessions WHERE started_at > ?
+            -- Window on ACTIVITY, not on session start: a conversation that began
+            -- two days ago and is still running is spending money in this window.
+            -- Filtering on started_at silently dropped it (and every long-lived
+            -- session) from "1 day", which is exactly the case this panel is read in.
+            FROM sessions WHERE COALESCE(last_activity_at, started_at) > ?
         """, cutoff)[0]
         by_model = _normalize_by_model(by_model)
 

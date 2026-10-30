@@ -32,6 +32,8 @@ concurrency:
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      contents: write   # upload the installer to a release (the update feed)
     timeout-minutes: 90
     env:
       CI: 'true'
@@ -105,6 +107,27 @@ jobs:
       - name: List artifacts
         shell: pwsh
         run: Get-ChildItem apps/desktop/release -File | Select-Object Name, Length | Format-Table -AutoSize
+
+      # The update feed IS this repo's Releases: latest.yml + the installer +
+      # blockmaps are the assets electron-updater reads. Uploaded here rather
+      # than by electron-builder's publisher so repeated builds of the same
+      # version replace the assets instead of colliding with them.
+      - name: Publish the update feed (GitHub release)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = node -p "require('./apps/desktop/package.json').version"
+          $tag = "v$version"
+          Write-Host "release tag: $tag"
+          gh release view $tag --repo $env:GITHUB_REPOSITORY 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --repo $env:GITHUB_REPOSITORY --title "Hermes Light $version" --notes "Automated NSIS build from $env:GITHUB_SHA."
+          }
+          $assets = @(Get-ChildItem apps/desktop/release -File | Where-Object { $_.Name -match '\.(exe|blockmap)$' -or $_.Name -eq 'latest.yml' } | ForEach-Object { $_.FullName })
+          if ($assets.Count -eq 0) { throw 'no feed assets found (expected latest.yml + installer)' }
+          gh release upload $tag @assets --repo $env:GITHUB_REPOSITORY --clobber
+          "feed assets published: $($assets.Count)"
 
       - name: Upload installer
         uses: actions/upload-artifact@v4

@@ -102,6 +102,11 @@ module.exports = {
   // owns its distribution and updates).
   publish: channelRequest ? null : nsisFeedUrl
     ? [{ provider: 'generic', url: nsisFeedUrl }]
+    // Self-hosted NSIS install: the feed is this fork's GitHub Releases. The
+    // installer is uploaded by the workflow (gh release upload --clobber), and
+    // electron-updater reads latest.yml straight out of the release assets.
+    : (process.env.HERMES_DESKTOP_WIN_TARGETS || '').includes('nsis')
+      ? [{ provider: 'github', owner, repo, releaseType: 'release' }]
     : !channel
     ? null
     : [

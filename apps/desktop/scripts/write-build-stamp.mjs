@@ -253,7 +253,11 @@ export function buildStampPayload(stamp, env = process.env, platform = process.p
     bootstrap: 'self',
     store: 'microsoft-store',
     bundled: { win32: 'app-installer', darwin: 'electron-updater' }[platform] || 'external',
-    light: platform === 'darwin' ? 'electron-updater' : 'external'
+    // macOS Light updates through electron-updater's MacUpdater. Windows
+    // Light used to be 'external' (no in-app updater at all); with the NSIS
+    // installer target it owns its swap through NsisUpdater
+    // (electron/updater/windows-nsis.ts), so both platforms share the value.
+    light: 'electron-updater'
   }[variant]
   if (!updateMechanism) throw new Error(`Unknown desktop variant: ${variant}`)
   if (channelBuild && updateMechanism === 'external') throw new Error('Channel builds require a supported native update owner')

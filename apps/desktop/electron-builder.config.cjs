@@ -69,6 +69,13 @@ if (!/^\d+\.\d+\.\d+$/.test(electronVersion)) {
 const macFeed = channelRequest ? null : feedContract.darwinFeed(channel === 'canary' || channel === 'light-canary' ? 'canary' : 'stable', light)
 const publicUrl = feedContract.feedBaseUrl(process.env.CLOUDFLARE_R2_PUBLIC_URL)
 
+// NSIS installs have no OS update owner (MSIX does — see app-installer.ts), so
+// they update through electron-updater against a generic feed. Point
+// HERMES_UPDATE_FEED_URL at the directory holding latest.yml + the installer
+// and electron-builder bakes it into resources/app-update.yml at pack time.
+// Unset keeps the official MSIX/channel behavior untouched.
+const nsisFeedUrl = (process.env.HERMES_UPDATE_FEED_URL || '').trim()
+
 /** @satisfies {Configuration} */
 module.exports = {
   electronVersion,
@@ -93,7 +100,9 @@ module.exports = {
   // var (local, or a fork without the R2 vars) keep the github provider, which
   // is exactly today's behavior. The store build has no feed at all (the Store
   // owns its distribution and updates).
-  publish: channelRequest ? null : !channel
+  publish: channelRequest ? null : nsisFeedUrl
+    ? [{ provider: 'generic', url: nsisFeedUrl }]
+    : !channel
     ? null
     : [
         publicUrl
@@ -235,12 +244,28 @@ module.exports = {
   win: {
     executableName: windowsExecutableName,
     legalTrademarks: displayName,
-    target: ['msix'],
+    // MSIX is the official (and auto-updating) Windows shape. A self-built
+    // install can ask for the NSIS installer instead:
+    //   $env:HERMES_DESKTOP_WIN_TARGETS = 'nsis'
+    target: (process.env.HERMES_DESKTOP_WIN_TARGETS || 'msix')
+      .split(',')
+      .map(value => value.trim())
+      .filter(Boolean),
     // The updaters' relaunch waiter is PowerShell run outside the package. The
     // sealed payload's snapshot omits scripts/, so it ships as a resource
     // (RELAUNCH_WAITER_SCRIPT in electron/updater/relaunch-waiter.ts).
     extraResources: [{ from: 'scripts/update-relaunch-waiter.ps1', to: 'update-relaunch-waiter.ps1' }],
     ...windowsSigning()
+  },
+  // Only used by a NSIS build (HERMES_DESKTOP_WIN_TARGETS=nsis). Per-user,
+  // no elevation, Start Menu + Apps & features entries, and the hermes://
+  // protocol written by build/installer-protocol.nsh — electron-builder's
+  // `protocols` above is macOS-only, so Windows needs the NSIS include.
+  nsis: {
+    oneClick: true,
+    perMachine: false,
+    deleteAppDataOnUninstall: false,
+    include: 'build/installer-protocol.nsh'
   },
   msix: {
     // A store build uses the Partner Center packaging identity (the Store

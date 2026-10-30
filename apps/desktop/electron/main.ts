@@ -641,6 +641,7 @@ import { readSourceUpdate, sourceChannelName, type SourceUpdate } from './update
 import { ExternalStrategy } from './updater/external'
 import { readUpdatesFeedBaseFromConfig, resolveFeedBaseUrl } from './updater/feed-config'
 import { createChannelMacStrategy, createMacStrategy } from './updater/mac-client'
+import { WindowsNsisStrategy } from './updater/windows-nsis'
 import { UpdateOperation } from './updater/operation'
 import {
   type ConsumedRelaunch,
@@ -3506,6 +3507,21 @@ function createNativePackagedStrategy(
   target?: ChannelTarget
 ): UpdaterStrategy {
   if (mechanism === 'electron-updater') {
+    // Windows has no native App Installer feed (that is app-installer/MSIX)
+    // and no Squirrel-style owner, so a NSIS install is updated by the bundled
+    // electron-updater client against the generic feed in app-update.yml.
+    if (process.platform === 'win32') {
+      return new WindowsNsisStrategy({
+        appVersion: app.getVersion(),
+        channel: resolveUpdaterChannelFromStamp(),
+        light: isLightVariant(),
+        feedBaseUrl: resolveDesktopFeedBaseUrl(),
+        log: rememberLog,
+        beforeInstall: teardownBundledBackend,
+        onInstallFailure: restoreBundledBackend
+      })
+    }
+
     const deps: Parameters<typeof createMacStrategy>[0] = {
       channel: resolveUpdaterChannelFromStamp(),
       light: isLightVariant(),

@@ -80,15 +80,19 @@ jobs:
         run: |
           $ver = "${{ github.event.inputs.version }}"
           if (-not $ver) {
-            # Track upstream's own release line (v0.22.5 → 0.22.5) and append the
-            # run number as a semver PRERELEASE: 0.22.5-17, 0.22.5-18, …
-            # Why not build metadata (`+`)? It compares EQUAL to its base in
-            # semver, so the updater never fired. Why not the dated scheme? It
-            # untethered the installer from the Hermes version it was built from.
-            # Prerelease ordering gives both: monotonic within a release line, and
-            # a newer upstream line (0.23.0) still outranks 0.22.5-99.
-            $base = git describe --tags --abbrev=0 --exclude '*canary*' --match 'v0.*' 2>$null
-            if ($base) { $base = $base -replace '^v', '' } else { $base = '0.0.0' }
+            # Track UPSTREAM's release line, taken from upstream's own tags.
+            # `git describe` cannot be used: the fork tags its own builds
+            # (v0.20261030.11-13 …), those tags are reachable, and describe then
+            # happily returns our own artifact as the "upstream" version.
+            $tags = git ls-remote --tags --refs https://github.com/NousResearch/hermes-agent.git 'v0.*' |
+              ForEach-Object { ($_ -split 'refs/tags/')[1] } |
+              ForEach-Object { $_.TrimStart('v') } |
+              Where-Object { $_ -match '^\d+\.\d+\.\d+$' }
+            $base = $tags | Sort-Object { [version]$_ } | Select-Object -Last 1
+            if (-not $base) { $base = '0.0.0' }
+            # Prerelease tail, not build metadata: `+` compares EQUAL to its base
+            # in semver, so the updater would never fire; `-N` orders within a
+            # line and still loses to a newer upstream release.
             $ver = "$base-$env:GITHUB_RUN_NUMBER"
           }
           "installer version: $ver  (package.json shipped $(node -p "require('./package.json').version"))"

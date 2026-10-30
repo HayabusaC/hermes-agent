@@ -81,6 +81,43 @@ def _rows(db, sql: str, cutoff: float) -> list[dict[str, Any]]:
     return [dict(r) for r in db._conn.execute(sql, (cutoff,)).fetchall()]
 
 
+def _model_identity(model: str, provider: str) -> tuple[str, str]:
+    """Grouping key that treats ``x`` and ``vendor/x`` as one model for a provider.
+
+    Providers echo the bare wire id in some responses (``claude-haiku-5-5``) and
+    the qualified catalogue id in others (``anthropic/claude-haiku-5-5``); one
+    session each otherwise renders as two rows of the same model.
+    """
+    lowered = (model or "unknown").strip().lower()
+    return (provider or "", lowered.rsplit("/", 1)[-1])
+
+
+def _normalize_by_model(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse per-(model, provider) duplicates onto the qualified id; drop empty rows."""
+    merged: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        provider = str(row.get("provider") or "")
+        model = str(row.get("model") or "")
+        key = _model_identity(model, provider)
+        target = merged.get(key)
+        if target is None:
+            merged[key] = dict(row)
+            continue
+        # Keep the qualified spelling for display; sum every counter.
+        if "/" in model and "/" not in str(target.get("model") or ""):
+            target["model"] = model
+        for field, value in row.items():
+            if field in ("model", "provider") or not isinstance(value, (int, float)):
+                continue
+            target[field] = (target.get(field) or 0) + value
+    kept = [
+        row for row in merged.values()
+        if (row.get("input_tokens") or 0) + (row.get("output_tokens") or 0) > 0
+        or (row.get("estimated_cost") or 0) > 0 or (row.get("actual_cost") or 0) > 0
+    ]
+    return sorted(kept, key=lambda r: (r.get("input_tokens") or 0) + (r.get("output_tokens") or 0), reverse=True)
+
+
 def _get_usage_analytics(days: int = 30, profile: Optional[str] = None):
     from agent.insights import InsightsEngine
 
@@ -104,13 +141,18 @@ def _get_usage_analytics(days: int = 30, profile: Optional[str] = None):
 
         by_model = _rows(db, """
             SELECT model,
+                   COALESCE(billing_provider, '') as provider,
                    SUM(input_tokens) as input_tokens,
                    SUM(output_tokens) as output_tokens,
+                   COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
+                   COALESCE(SUM(cache_write_tokens), 0) as cache_write_tokens,
+                   COALESCE(SUM(reasoning_tokens), 0) as reasoning_tokens,
                    COALESCE(SUM(estimated_cost_usd), 0) as estimated_cost,
+                   COALESCE(SUM(actual_cost_usd), 0) as actual_cost,
                    COUNT(*) as sessions,
                    SUM(COALESCE(api_call_count, 0)) as api_calls
             FROM sessions WHERE started_at > ? AND model IS NOT NULL
-            GROUP BY model ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC
+            GROUP BY model, provider ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC
         """, cutoff)
 
         # Fold in auxiliary usage (vision, compression, ...) from session_model_usage.
@@ -127,10 +169,16 @@ def _get_usage_analytics(days: int = 30, profile: Optional[str] = None):
                    SUM(reasoning_tokens) as total_reasoning,
                    COALESCE(SUM(estimated_cost_usd), 0) as total_estimated_cost,
                    COALESCE(SUM(actual_cost_usd), 0) as total_actual_cost,
+                   -- Invoice-first per SESSION, then summed: a settled session must not
+                   -- contribute its estimate too, and an unsettled one still counts.
+                   COALESCE(SUM(CASE WHEN COALESCE(actual_cost_usd, 0) > 0
+                                     THEN actual_cost_usd
+                                     ELSE COALESCE(estimated_cost_usd, 0) END), 0) as total_cost,
                    COUNT(*) as total_sessions,
                    SUM(COALESCE(api_call_count, 0)) as total_api_calls
             FROM sessions WHERE started_at > ?
         """, cutoff)[0]
+        by_model = _normalize_by_model(by_model)
         usage = InsightsEngine(db).get_usage_breakdown(days=days)
 
         return {

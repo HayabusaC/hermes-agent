@@ -387,6 +387,7 @@ def _aux_usage_rows(db, cutoff: float) -> list[dict[str, Any]]:
                    SUM(u.input_tokens) as input_tokens,
                    SUM(u.output_tokens) as output_tokens,
                    SUM(u.cache_read_tokens) as cache_read_tokens,
+                   COALESCE(SUM(u.cache_write_tokens), 0) as cache_write_tokens,
                    SUM(u.reasoning_tokens) as reasoning_tokens,
                    COALESCE(SUM(u.estimated_cost_usd), 0) as estimated_cost,
                    COUNT(DISTINCT u.session_id) as sessions,
@@ -410,15 +411,22 @@ def _merge_aux_into_by_model(
     models that ONLY appear via aux calls (e.g. a vision model) get their own entry."""
     if not aux_rows:
         return by_model
-    merged: dict[str, dict[str, Any]] = {row.get("model") or "unknown": row for row in by_model}
+    # Keyed by (model, provider): one model id can be served by two providers
+    # (custom endpoint vs a plugin profile) and their rows must not collapse.
+    merged: dict[tuple[str, str], dict[str, Any]] = {
+        (row.get("model") or "unknown", row.get("provider") or ""): row for row in by_model
+    }
     for aux in aux_rows:
         model = aux.get("model") or "unknown"
-        target = merged.setdefault(model, {"model": model, "input_tokens": 0, "output_tokens": 0,
-                                           "estimated_cost": 0, "sessions": 0, "api_calls": 0})
-        for key in _AUX_COUNTERS:
-            target[key] = (target.get(key) or 0) + (aux.get(key) or 0)
+        provider = aux.get("billing_provider") or ""
+        target = merged.setdefault((model, provider), {
+            "model": model, "provider": provider, "input_tokens": 0, "output_tokens": 0,
+            "cache_read_tokens": 0, "cache_write_tokens": 0, "reasoning_tokens": 0,
+            "estimated_cost": 0, "sessions": 0, "api_calls": 0})
+        for counter in _AUX_COUNTERS:
+            target[counter] = (target.get(counter) or 0) + (aux.get(counter) or 0)
         target.setdefault("aux_tasks", []).append(
-            {"task": aux.get("task") or "", **{key: aux.get(key) or 0 for key in _AUX_COUNTERS}})
+            {"task": aux.get("task") or "", **{counter: aux.get(counter) or 0 for counter in _AUX_COUNTERS}})
     return sorted(merged.values(), key=_token_volume, reverse=True)
 
 

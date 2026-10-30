@@ -650,7 +650,7 @@ class GatewayTurnPrepareMixin:
         (inbound text rejected)."""
         from gateway.run import _load_gateway_config
         from tools.approval_yolo import restore_gateway_yolo
-        _was_auto_reset, _is_new_session = await self._hmwa_open_session(session_entry, session_key, source)
+        _was_auto_reset, _is_new_session = await self._hmwa_open_session(session_entry, session_key, source)  # noqa: F841 - newness now comes from the transcript
         restore_gateway_yolo(session_key, session_entry.yolo)  # None: TurnRunner seeds the launch policy
         context = build_session_context(source, self.config, session_entry)
         # Session context variables for tools (task-local, concurrency-safe)
@@ -687,10 +687,8 @@ class GatewayTurnPrepareMixin:
         # With no text (e.g. voice-only), retain the existing enriched-message title fallback.
         title_user_message = event.text or None
 
-        # Auto-load bound skill(s) only on NEW sessions; ongoing ones carry the content in history.
+        # Channel-bound skill(s) are injected below, once the transcript is known (see there).
         _auto = getattr(event, "auto_skill", None)
-        if _is_new_session and _auto:
-            self._hmwa_auto_load_skills(event, _auto, _quick_key, session_key)
 
         await self._hmwa_acquire_turn_lease(_quick_key, run_generation, session_entry, _session_env_tokens)
 
@@ -709,6 +707,16 @@ class GatewayTurnPrepareMixin:
             self._clear_session_env(_session_env_tokens)
             from gateway.session_results import record_unexecuted_failure
             return record_unexecuted_failure(t("gateway.errors.history_unavailable")), _session_env_tokens
+
+        # Channel-bound skill(s): an EMPTY transcript is the authoritative "no turns yet" signal.
+        # The ``created_at == updated_at`` test in ``_hmwa_open_session`` is not reliable — admission
+        # preflight (session_authority.register -> get_or_create_session) touches the route's activity
+        # clock before the turn starts, so a bound skill would never load on the very message that
+        # opens the session. Bookkeeping rows (session_meta/system) do not count as turns; ongoing
+        # sessions already carry the payload in their history.
+        _has_turns = any(m.get("role") in ("user", "assistant", "tool") for m in history)
+        if _auto and not _has_turns:
+            self._hmwa_auto_load_skills(event, _auto, _quick_key, session_key)
 
         await self._hmwa_first_contact_notes(source, history, turn_sidecar_notes, internal=event.internal)
 

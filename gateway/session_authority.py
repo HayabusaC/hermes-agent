@@ -10,6 +10,8 @@ import contextlib
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
 from functools import partial
+import logging
+import os
 import sqlite3
 from types import SimpleNamespace
 import uuid
@@ -256,15 +258,45 @@ class SessionAuthority:
     def register(self, source):
         return self._publish_route(source, *self._reserve_route(source))
 
+    def _platform_workspace(self, platform):
+        """The working directory a messaging platform's sessions are minted with.
+
+        ``platforms.<name>.workspace`` (an absolute or ``~`` path): a session's Desktop project is
+        derived from its stored ``cwd``, and platform sessions are otherwise created without one —
+        every Slack/Telegram conversation then piles into the synthetic "Home" bucket instead of a
+        project. Unset (the default) keeps the historical NULL cwd, so single-profile installs and
+        every platform that does not opt in are byte-identical to before.
+        """
+        config = getattr(self.runner, "config", None)
+        platform_cfg = (getattr(config, "platforms", None) or {}).get(platform)
+        raw = str((getattr(platform_cfg, "extra", None) or {}).get("workspace") or "").strip()
+        if not raw:
+            return None
+        path = os.path.abspath(os.path.expanduser(raw))
+        if not os.path.isdir(path):
+            logging.getLogger(__name__).warning(
+                "platform %s workspace is not a directory, keeping the session cwd unset: %s",
+                getattr(platform, "value", platform), path)
+            return None
+        return path
+
     def _reserve_route(self, source):
         """The durable half of ``register`` (routing entry + reserved row): thread-safe, so async
         callers run it off the owner loop and publish the live entry on the loop."""
         self._require_admission_open()
         entry = self.runner.session_store.get_or_create_session(source)
         sid = self.logical_owner(entry.session_id)
-        # SessionStore reserves routing metadata before the first AIAgent exists.
-        if self.db.get_session(sid) is None:
-            self.db.create_session(sid, source=source.platform.value)
+        # SessionStore reserves routing metadata before the first AIAgent exists — and mints the row
+        # itself (``session_recovery._session_create_kwargs``), so the cwd is settled on the existing
+        # row instead of passed to the INSERT (same ``get_session`` read the create branch needed).
+        existing = self.db.get_session(sid)
+        workspace = self._platform_workspace(source.platform)
+        if existing is None:
+            self.db.create_session(sid, source=source.platform.value, cwd=workspace)
+        elif workspace and not str(existing.get("cwd") or "").strip():
+            # A platform session's Desktop project is derived from its stored cwd; leaving it NULL
+            # files every conversation under the synthetic "Home" bucket.
+            self.db.update_session_cwd(sid, workspace, replace_git_meta=False)
         return sid, entry.session_key
 
     def _publish_route(self, source, sid, route):

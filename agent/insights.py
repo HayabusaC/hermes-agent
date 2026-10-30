@@ -489,7 +489,12 @@ class InsightsEngine:
         # Cost breakdown — surface the three buckets so subscription-included and unknown-cost sessions are
         # visible instead of silently collapsing to $0. See #77223.
         est_cost = o.get("estimated_cost", 0.0)
-        values = (_fmt_est_cost(est_cost) if est_cost > 0 else "", o.get("included_cost_sessions", 0), o.get("unknown_cost_sessions", 0))
+        act_cost = o.get("actual_cost", 0.0)
+        # ``actual_cost`` is provider-invoiced spend (``cost_status='actual'``, e.g. HepAI
+        # settlement or a provider cost API). It is reported alongside the estimate — never
+        # summed with it — so a reconciled session is not counted twice.
+        values = (_fmt_est_cost(est_cost) if est_cost > 0 else "", o.get("included_cost_sessions", 0),
+                  o.get("unknown_cost_sessions", 0), _fmt_est_cost(act_cost) if act_cost > 0 else "")
         return [tpl.format(v) for tpl, v in zip(templates, values) if v]
 
     def format_terminal(self, report: dict) -> str:
@@ -526,7 +531,8 @@ class InsightsEngine:
         lines += [f"  Avg msgs/session:  {o['avg_messages_per_session']:.1f}", ""]
         # Cost buckets: show included/unknown sessions instead of collapsing to $0.
         cost_lines = self._cost_lines(o, ("  Estimated:          {}", "  Included:           {} session(s) (subscription — no provider invoice)",
-                                          "  Unknown:            {} session(s) (no pricing data)"))
+                                          "  Unknown:            {} session(s) (no pricing data)",
+                                          "  Actual (invoiced):  {}"))
         if cost_lines:
             lines += self._section("💰 Cost") + cost_lines + [""]
         if report["models"]:
@@ -584,7 +590,8 @@ class InsightsEngine:
         if o["total_hours"] > 0:
             lines.append(f"**Active time:** ~{format_duration_compact(o['total_hours'] * 3600)} | **Avg session:** ~{format_duration_compact(o['avg_session_duration'])}")
         lines.append("")
-        cost_parts = self._cost_lines(o, ("{} estimated", "{} included (subscription)", "{} unknown"))
+        cost_parts = self._cost_lines(o, ("{} estimated", "{} included (subscription)", "{} unknown",
+                                          "{} actual (invoiced)"))
         if cost_parts:
             lines += [f"**Cost:** {' | '.join(cost_parts)}", ""]
         if report["models"]:

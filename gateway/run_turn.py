@@ -2385,6 +2385,10 @@ class GatewayTurnMixin(GatewayTurnPrepareMixin, GatewayTurnHygieneMixin, Gateway
             await self._run_agent_finalize_streaming_tts(turn_ctx, adapter)
             pending_event, pending = await self._run_agent_drain_pending(result, adapter, source, session_key)
             if pending_event or pending:
+                # Bubble cleanup must be scheduled on THIS exit path too: the early return used to
+                # skip the call below the finally, leaking this turn's progress bubbles whenever the
+                # turn ended with a queued/pending message (e.g. a background-completion notice).
+                self._run_agent_schedule_bubble_cleanup(response, _cleanup_adapter, turn_ctx)
                 return await self._run_agent_queued_followup(
                     turn_ctx, adapter, pending, pending_event, response, result, stream_task,
                 )

@@ -12,7 +12,6 @@
 // with it, while Windows needs NsisUpdater over a plain generic feed.
 
 import electronUpdater from 'electron-updater'
-import { gt, valid } from 'semver'
 
 import type { UpdaterApplyResultWire, UpdaterStrategy, UpdaterStatusWire } from './index'
 
@@ -136,12 +135,29 @@ export class WindowsNsisStrategy implements UpdaterStrategy {
   }
 
   private isNewer(latest: string): boolean {
-    // Functional API on purpose: the SemVer class shape varies across semver
-    // majors (and `compare` is not on the type this tree installs).
-    if (!valid(latest) || !valid(this.deps.appVersion)) {
-      return latest !== this.deps.appVersion
-    }
-
-    return gt(latest, this.deps.appVersion)
+    return isNewerVersion(latest, this.deps.appVersion)
   }
+}
+
+/** Numeric compare of dotted versions ("0.22.10" > "0.22.9"), prerelease and
+ *  build suffixes ignored. Deliberately dependency-free: the semver typings in
+ *  this tree expose neither `gt` nor `valid`, and one comparison does not
+ *  justify fighting them. */
+export function isNewerVersion(latest: string, current: string): boolean {
+  const parts = (value: string): number[] =>
+    value
+      .replace(/^v/i, '')
+      .split(/[.+-]/)
+      .map(piece => Number.parseInt(piece, 10))
+      .filter((n): n is number => Number.isFinite(n))
+
+  const a = parts(latest)
+  const b = parts(current)
+  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+    const x = a[i] ?? 0
+    const y = b[i] ?? 0
+    if (x !== y) return x > y
+  }
+
+  return latest !== current
 }

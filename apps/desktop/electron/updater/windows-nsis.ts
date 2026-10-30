@@ -54,9 +54,12 @@ export class WindowsNsisStrategy implements UpdaterStrategy {
     // Every build of the same upstream release is a prerelease of it
     // (0.22.5-17), so the updater must consider prerelease versions at all.
     this.updater.allowPrerelease = true
-    if (/^(stable|canary)$/.test(deps.channel)) {
-      this.updater.channel = deps.channel
-    }
+    // electron-updater derives the feed FILE NAME from the channel:
+    // channel 'stable' makes it request `stable.yml`, and this fork only ever
+    // publishes `latest.yml` (electron-builder writes that name for a plain
+    // release, not a channel build). Pin the channel so the requested file and
+    // the published file cannot drift apart.
+    this.updater.channel = 'latest'
     this.updater.logger = {
       info: (message?: unknown) => deps.log(`windows updater: ${String(message ?? '')}`),
       warn: (message?: unknown) => deps.log(`windows updater: ${String(message ?? '')}`),

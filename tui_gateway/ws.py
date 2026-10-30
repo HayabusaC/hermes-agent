@@ -97,6 +97,10 @@ _WS_LOG_PAYLOAD_PREVIEW = 240
 # by a long compaction, a GIL-heavy turn): the client's heartbeat deadline measures the transport, not
 # handler latency (#108325). A full queue parks the reader — the old serial behaviour.
 _WS_DISPATCH_QUEUE_MAX = 256
+# Liveness probes the reader answers itself, never queued behind the serial lane: ``gateway.ping`` is the
+# heartbeat, ``ping`` the Desktop's focus/wake probe. Queued, a 5 s probe behind a slow control RPC
+# (compression, a large resume) timed out and the Desktop closed a healthy socket (#145737).
+_READER_PINGS = {"gateway.ping": {"ok": True}, "ping": {"pong": True}}
 # These handlers only project already-owned state.  They may take seconds for a large stored
 # transcript, so running them through the serial control lane turns an inexpensive interrupt or
 # control read behind them into a client timeout.  Keep the exception deliberately narrow: mutating
@@ -692,9 +696,10 @@ async def handle_ws(ws: Any, *, auth_identity: dict | None = None, subprotocol: 
                 await _reply(_error(-32700, "parse error", None), "send_failed_after_parse_error",
                              "ws parse-error reply send failed peer=%s", peer)
                 continue
-            if isinstance(req, dict) and req.get("method") == "gateway.ping":
+            ping_result = _READER_PINGS.get(str(req.get("method"))) if isinstance(req, dict) else None
+            if ping_result is not None:
                 req_id = req.get("id")
-                await _reply({"jsonrpc": "2.0", "result": {"ok": True}, "id": req_id}, "send_failed_after_heartbeat",
+                await _reply({"jsonrpc": "2.0", "result": ping_result, "id": req_id}, "send_failed_after_heartbeat",
                              "ws heartbeat reply send failed peer=%s id=%s", peer, req_id)
                 continue
             await _queue_request(req)

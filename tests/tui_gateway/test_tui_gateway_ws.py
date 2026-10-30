@@ -251,6 +251,29 @@ def test_ws_ping_is_answered_while_an_earlier_rpc_blocks_dispatch(monkeypatch):
     assert ids().index("r1") < ids().index("r2")
 
 
+def test_desktop_liveness_ping_is_answered_while_an_earlier_rpc_blocks_dispatch(monkeypatch):
+    """#145737: the Desktop's focus/wake probe sends legacy ``ping`` with a 5 s budget and closes the socket when it
+    goes unanswered. Queued behind a slow control RPC (manual compression, a large resume) it timed out on a healthy
+    connection, so the reader answers it as it answers ``gateway.ping``."""
+    ws, inbound, sent, log, release = _slow_dispatch_harness(monkeypatch)
+
+    async def scenario():
+        task = asyncio.create_task(ws_mod.handle_ws(ws))
+        try:
+            inbound.put_nowait(_rpc("r1", "slow"))
+            inbound.put_nowait(_rpc("probe-1", "ping"))
+            answered = await _wait_for(lambda: any(f.get("id") == "probe-1" for f in sent), timeout=1.0)
+            assert answered, "ping waited behind the blocked control lane"
+            assert {"jsonrpc": "2.0", "result": {"pong": True}, "id": "probe-1"} in sent
+            assert "dispatch:ping" not in log
+        finally:
+            release.set()
+        inbound.put_nowait(None)
+        await asyncio.wait_for(task, 5)
+
+    asyncio.run(scenario())
+
+
 def test_ws_context_breakdown_does_not_block_a_later_control_read(monkeypatch):
     """Regression for #140667: the expensive read-only context meter may finish after controls."""
     ws, inbound, sent, log, release = _slow_dispatch_harness(monkeypatch)

@@ -89,11 +89,18 @@ jobs:
         working-directory: apps/desktop
         run: npm run typecheck
 
-      - name: Build renderer, main process and installer
+      - name: Build renderer and main process
         working-directory: apps/desktop
-        run: |
-          npm run build
-          npm run builder -- --win nsis --publish never
+        run: npm run build
+
+      - name: Package the NSIS installer
+        working-directory: apps/desktop
+        # `npm run builder` is upstream's prepared-packaging wrapper: it admits
+        # only the formats its preparation step acquired (dir/msix/zip on
+        # Windows), so `--win nsis` is refused there with
+        # "Argument is not admitted by prepared packaging". electron-builder
+        # itself supports nsis and fetches its own tools, so call it directly.
+        run: npx electron-builder --config electron-builder.config.cjs --win nsis --publish never
 
       - name: List artifacts
         shell: pwsh

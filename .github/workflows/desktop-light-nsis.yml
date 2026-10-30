@@ -111,6 +111,34 @@ jobs:
         # itself supports nsis and fetches its own tools, so call it directly.
         run: npx electron-builder --config electron-builder.config.cjs --win nsis --publish never
 
+      # electron-builder only writes latest.yml for providers that carry a
+      # channel of their own. With the generic provider (what this fork uses so
+      # the client never touches the rate-limited GitHub API) `--publish never`
+      # leaves no yml behind, and the release ends up with the installer but no
+      # feed descriptor — the client then 404s on latest.yml. Generate it here so
+      # the feed is provider-independent.
+      - name: Ensure latest.yml exists
+        shell: pwsh
+        run: |
+          $yml = 'apps/desktop/release/latest.yml'
+          if (Test-Path $yml) { "already written by electron-builder"; return }
+          $exe = Get-ChildItem apps/desktop/release -File | Where-Object { $_.Extension -eq '.exe' } | Select-Object -First 1
+          if (-not $exe) { throw 'no installer found in apps/desktop/release' }
+          $ver = node -p "require('./apps/desktop/package.json').version"
+          $sha = [Convert]::ToBase64String([Security.Cryptography.SHA512]::Create().ComputeHash([IO.File]::ReadAllBytes($exe.FullName)))
+          $date = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
+          @(
+            "version: $ver"
+            "files:"
+            "  - url: $($exe.Name)"
+            "    sha512: $sha"
+            "    size: $($exe.Length)"
+            "path: $($exe.Name)"
+            "sha512: $sha"
+            "releaseDate: '$date'"
+          ) | Set-Content -Path $yml -Encoding utf8
+          "generated $yml for $($exe.Name) ($ver)"
+
       - name: List artifacts
         shell: pwsh
         run: Get-ChildItem apps/desktop/release -File | Select-Object Name, Length | Format-Table -AutoSize

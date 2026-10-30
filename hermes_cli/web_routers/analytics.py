@@ -187,6 +187,19 @@ def _get_usage_analytics(days: int = 30, profile: Optional[str] = None):
             FROM sessions WHERE started_at > ?
         """, cutoff)[0]
         by_model = _normalize_by_model(by_model)
+
+        # Auxiliary calls (background review, title generation, approval summaries,
+        # compression …) are real spend that only lives in session_model_usage: the
+        # sessions counters never see them. The per-model rows fold them in, so the
+        # headline total MUST too — otherwise the rows sum to more than the total
+        # they sit under (the rows looked "wrong" while the total was the one that
+        # was incomplete). Aux usage is never invoice-settled, so its estimate is
+        # its cost.
+        aux_cost = sum(float(row.get("estimated_cost") or 0) for row in aux_rows)
+        if aux_cost:
+            totals["total_cost"] = (totals.get("total_cost") or 0) + aux_cost
+            totals["total_estimated_cost"] = (totals.get("total_estimated_cost") or 0) + aux_cost
+
         usage = InsightsEngine(db).get_usage_breakdown(days=days)
 
         return {

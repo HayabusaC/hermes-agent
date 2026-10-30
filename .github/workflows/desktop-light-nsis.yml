@@ -80,9 +80,13 @@ jobs:
         run: |
           $ver = "${{ github.event.inputs.version }}"
           if (-not $ver) {
-            $tag = git describe --tags --abbrev=0 2>$null
-            if ($tag) { $ver = $tag -replace '^v', '' }
-            else { $ver = "0.$((Get-Date).ToString('yyyyMMdd')).$env:GITHUB_RUN_NUMBER" }
+            # Never derive this from `git describe`: the fork carries upstream's
+            # canary tags (v0.22.5+canary.<timestamp>), and a build-metadata
+            # version compares EQUAL to its base in semver — electron-updater
+            # then refuses to see any newer build. A dated, run-numbered version
+            # is monotonic and parseable by both electron-updater and the
+            # client's own comparator.
+            $ver = "0.$((Get-Date).ToString('yyyyMMdd')).$env:GITHUB_RUN_NUMBER"
           }
           "installer version: $ver  (package.json shipped $(node -p "require('./package.json').version"))"
           npm pkg set version=$ver

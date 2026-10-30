@@ -13,19 +13,36 @@ type Period = (typeof PERIODS)[number]
 const compact = (n: number | null | undefined): string => {
   const v = Number(n) || 0
 
-  if (Math.abs(v) >= 1e9) return `${(v / 1e9).toFixed(2)}B`
-  if (Math.abs(v) >= 1e6) return `${(v / 1e6).toFixed(2)}M`
-  if (Math.abs(v) >= 1e3) return `${(v / 1e3).toFixed(1)}k`
+  if (Math.abs(v) >= 1e9) {
+    return `${(v / 1e9).toFixed(2)}B`
+  }
+
+  if (Math.abs(v) >= 1e6) {
+    return `${(v / 1e6).toFixed(2)}M`
+  }
+
+  if (Math.abs(v) >= 1e3) {
+    return `${(v / 1e3).toFixed(1)}k`
+  }
 
   return String(v)
 }
 
 const yuan = cnyFromUsd
 
-const costOf = (estimated: number | null | undefined, actual: number | null | undefined): number => {
-  const billed = Number(actual) || 0
+// The gateway sends `cost` already resolved invoice-first per session; falling
+// back to estimated/actual here is only for older backends. Deriving it locally
+// from the row's estimated+actual totals is wrong: a row whose sessions settled
+// would drop the estimate of its unsettled ones, so the rows stopped summing to
+// the total shown above them.
+const rowCost = (row: { cost?: number; estimated_cost?: number | null; actual_cost?: number | null }): number => {
+  if (typeof row.cost === 'number') {
+    return row.cost
+  }
 
-  return billed > 0 ? billed : Number(estimated) || 0
+  const billed = Number(row.actual_cost) || 0
+
+  return billed > 0 ? billed : Number(row.estimated_cost) || 0
 }
 
 /** Today's spend for the status-bar chip (invoice first, else the estimate). */
@@ -54,13 +71,18 @@ export function UsageCostPanel() {
   const { data, isFetching } = useQuery({
     queryFn: () => getUsageAnalytics(period),
     queryKey: ['usage-cost', period],
-    staleTime: 30_000
+    // This panel is the place people look right after a turn; without an
+    // interval it only ever showed whatever the first open fetched.
+    refetchInterval: 30_000,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
+    staleTime: 0
   })
 
   const totals = data?.totals
   const rows = data?.by_model ?? []
   const total = Number(totals?.total_cost) || rows.reduce(
-    (sum, row) => sum + costOf(row.estimated_cost, row.actual_cost),
+    (sum, row) => sum + rowCost(row),
     0
   )
 
@@ -117,7 +139,7 @@ export function UsageCostPanel() {
               <td className="py-0.5 pr-2 text-right tabular-nums">{compact(row.cache_read_tokens)}</td>
               <td className="py-0.5 pr-2 text-right tabular-nums">{compact(row.cache_write_tokens)}</td>
               <td className="py-0.5 pr-2 text-right tabular-nums">{compact(row.output_tokens)}</td>
-              <td className="py-0.5 pr-2 text-right tabular-nums">{yuan(costOf(row.estimated_cost, row.actual_cost))}</td>
+              <td className="py-0.5 pr-2 text-right tabular-nums">{yuan(rowCost(row))}</td>
             </tr>
           ))}
         </tbody>

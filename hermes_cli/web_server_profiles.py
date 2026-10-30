@@ -422,9 +422,12 @@ def _merge_aux_into_by_model(
         target = merged.setdefault((model, provider), {
             "model": model, "provider": provider, "input_tokens": 0, "output_tokens": 0,
             "cache_read_tokens": 0, "cache_write_tokens": 0, "reasoning_tokens": 0,
-            "estimated_cost": 0, "sessions": 0, "api_calls": 0})
+            "estimated_cost": 0, "cost": 0, "sessions": 0, "api_calls": 0})
         for counter in _AUX_COUNTERS:
             target[counter] = (target.get(counter) or 0) + (aux.get(counter) or 0)
+        # Aux calls are never invoice-settled, so their estimate IS their cost;
+        # keeping `cost` additive is what lets the rows sum to totals.total_cost.
+        target["cost"] = (target.get("cost") or 0) + (aux.get("estimated_cost") or 0)
         target.setdefault("aux_tasks", []).append(
             {"task": aux.get("task") or "", **{counter: aux.get(counter) or 0 for counter in _AUX_COUNTERS}})
     return sorted(merged.values(), key=_token_volume, reverse=True)

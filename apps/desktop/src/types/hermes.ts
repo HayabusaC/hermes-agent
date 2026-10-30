@@ -999,6 +999,9 @@ export interface AnalyticsModelEntry {
   actual_cost?: number
   /** Cache-write tokens, when the window's rows reported them. */
   cache_write_tokens?: number
+  /** Invoice-first cost for this row (per session: actual if settled, else the
+   *  estimate) — the same rule ``totals.total_cost`` uses, so the rows add up. */
+  cost?: number
   cache_read_tokens?: number
   estimated_cost: number
   input_tokens: number

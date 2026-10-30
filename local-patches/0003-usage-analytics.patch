@@ -1,0 +1,174 @@
+diff --git a/apps/shared/src/gateway-contract.generated.ts b/apps/shared/src/gateway-contract.generated.ts
+index b4be1f6440..c3d993de1a 100644
+--- a/apps/shared/src/gateway-contract.generated.ts
++++ b/apps/shared/src/gateway-contract.generated.ts
+@@ -858,6 +858,8 @@ export interface ModelCapabilities {
+   ultrafast?: boolean
+   reasoning: boolean
+   can_disable_reasoning?: boolean | null
++  context_window?: number | null
++  max_output?: number | null
+ }
+ /** ``hermes_cli/inventory.py::_apply_pricing`` — formatted $/Mtok strings (``""`` unknown, ``"free"``); the sale fields are Nous Portal-only. */
+ export interface ModelPricing {
+diff --git a/apps/shared/src/gateway-contract.openrpc.json b/apps/shared/src/gateway-contract.openrpc.json
+index 3a8fa20fac..85fbb5a304 100644
+--- a/apps/shared/src/gateway-contract.openrpc.json
++++ b/apps/shared/src/gateway-contract.openrpc.json
+@@ -24031,6 +24031,30 @@
+             ],
+             "default": null,
+             "title": "Can Disable Reasoning"
++          },
++          "context_window": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Context Window"
++          },
++          "max_output": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "default": null,
++            "title": "Max Output"
+           }
+         },
+         "required": [
+diff --git a/hermes_cli/web_routers/analytics.py b/hermes_cli/web_routers/analytics.py
+index 253e5bb85c..cddc8446f3 100644
+--- a/hermes_cli/web_routers/analytics.py
++++ b/hermes_cli/web_routers/analytics.py
+@@ -81,6 +81,43 @@ def _rows(db, sql: str, cutoff: float) -> list[dict[str, Any]]:
+     return [dict(r) for r in db._conn.execute(sql, (cutoff,)).fetchall()]
+ 
+ 
++def _model_identity(model: str, provider: str) -> tuple[str, str]:
++    """Grouping key that treats ``x`` and ``vendor/x`` as one model for a provider.
++
++    Providers echo the bare wire id in some responses (``claude-haiku-5-5``) and
++    the qualified catalogue id in others (``anthropic/claude-haiku-5-5``); one
++    session each otherwise renders as two rows of the same model.
++    """
++    lowered = (model or "unknown").strip().lower()
++    return (provider or "", lowered.rsplit("/", 1)[-1])
++
++
++def _normalize_by_model(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
++    """Collapse per-(model, provider) duplicates onto the qualified id; drop empty rows."""
++    merged: dict[tuple[str, str], dict[str, Any]] = {}
++    for row in rows:
++        provider = str(row.get("provider") or "")
++        model = str(row.get("model") or "")
++        key = _model_identity(model, provider)
++        target = merged.get(key)
++        if target is None:
++            merged[key] = dict(row)
++            continue
++        # Keep the qualified spelling for display; sum every counter.
++        if "/" in model and "/" not in str(target.get("model") or ""):
++            target["model"] = model
++        for field, value in row.items():
++            if field in ("model", "provider") or not isinstance(value, (int, float)):
++                continue
++            target[field] = (target.get(field) or 0) + value
++    kept = [
++        row for row in merged.values()
++        if (row.get("input_tokens") or 0) + (row.get("output_tokens") or 0) > 0
++        or (row.get("estimated_cost") or 0) > 0 or (row.get("actual_cost") or 0) > 0
++    ]
++    return sorted(kept, key=lambda r: (r.get("input_tokens") or 0) + (r.get("output_tokens") or 0), reverse=True)
++
++
+ def _get_usage_analytics(days: int = 30, profile: Optional[str] = None):
+     from agent.insights import InsightsEngine
+ 
+@@ -104,13 +141,18 @@ def _get_usage_analytics(days: int = 30, profile: Optional[str] = None):
+ 
+         by_model = _rows(db, """
+             SELECT model,
++                   COALESCE(billing_provider, '') as provider,
+                    SUM(input_tokens) as input_tokens,
+                    SUM(output_tokens) as output_tokens,
++                   COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
++                   COALESCE(SUM(cache_write_tokens), 0) as cache_write_tokens,
++                   COALESCE(SUM(reasoning_tokens), 0) as reasoning_tokens,
+                    COALESCE(SUM(estimated_cost_usd), 0) as estimated_cost,
++                   COALESCE(SUM(actual_cost_usd), 0) as actual_cost,
+                    COUNT(*) as sessions,
+                    SUM(COALESCE(api_call_count, 0)) as api_calls
+             FROM sessions WHERE started_at > ? AND model IS NOT NULL
+-            GROUP BY model ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC
++            GROUP BY model, provider ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC
+         """, cutoff)
+ 
+         # Fold in auxiliary usage (vision, compression, ...) from session_model_usage.
+@@ -127,10 +169,16 @@ def _get_usage_analytics(days: int = 30, profile: Optional[str] = None):
+                    SUM(reasoning_tokens) as total_reasoning,
+                    COALESCE(SUM(estimated_cost_usd), 0) as total_estimated_cost,
+                    COALESCE(SUM(actual_cost_usd), 0) as total_actual_cost,
++                   -- Invoice-first per SESSION, then summed: a settled session must not
++                   -- contribute its estimate too, and an unsettled one still counts.
++                   COALESCE(SUM(CASE WHEN COALESCE(actual_cost_usd, 0) > 0
++                                     THEN actual_cost_usd
++                                     ELSE COALESCE(estimated_cost_usd, 0) END), 0) as total_cost,
+                    COUNT(*) as total_sessions,
+                    SUM(COALESCE(api_call_count, 0)) as total_api_calls
+             FROM sessions WHERE started_at > ?
+         """, cutoff)[0]
++        by_model = _normalize_by_model(by_model)
+         usage = InsightsEngine(db).get_usage_breakdown(days=days)
+ 
+         return {
+diff --git a/hermes_cli/web_server_profiles.py b/hermes_cli/web_server_profiles.py
+index 91ab029a06..16cdde4e50 100644
+--- a/hermes_cli/web_server_profiles.py
++++ b/hermes_cli/web_server_profiles.py
+@@ -387,6 +387,7 @@ def _aux_usage_rows(db, cutoff: float) -> list[dict[str, Any]]:
+                    SUM(u.input_tokens) as input_tokens,
+                    SUM(u.output_tokens) as output_tokens,
+                    SUM(u.cache_read_tokens) as cache_read_tokens,
++                   COALESCE(SUM(u.cache_write_tokens), 0) as cache_write_tokens,
+                    SUM(u.reasoning_tokens) as reasoning_tokens,
+                    COALESCE(SUM(u.estimated_cost_usd), 0) as estimated_cost,
+                    COUNT(DISTINCT u.session_id) as sessions,
+@@ -410,15 +411,22 @@ def _merge_aux_into_by_model(
+     models that ONLY appear via aux calls (e.g. a vision model) get their own entry."""
+     if not aux_rows:
+         return by_model
+-    merged: dict[str, dict[str, Any]] = {row.get("model") or "unknown": row for row in by_model}
++    # Keyed by (model, provider): one model id can be served by two providers
++    # (custom endpoint vs a plugin profile) and their rows must not collapse.
++    merged: dict[tuple[str, str], dict[str, Any]] = {
++        (row.get("model") or "unknown", row.get("provider") or ""): row for row in by_model
++    }
+     for aux in aux_rows:
+         model = aux.get("model") or "unknown"
+-        target = merged.setdefault(model, {"model": model, "input_tokens": 0, "output_tokens": 0,
+-                                           "estimated_cost": 0, "sessions": 0, "api_calls": 0})
+-        for key in _AUX_COUNTERS:
+-            target[key] = (target.get(key) or 0) + (aux.get(key) or 0)
++        provider = aux.get("billing_provider") or ""
++        target = merged.setdefault((model, provider), {
++            "model": model, "provider": provider, "input_tokens": 0, "output_tokens": 0,
++            "cache_read_tokens": 0, "cache_write_tokens": 0, "reasoning_tokens": 0,
++            "estimated_cost": 0, "sessions": 0, "api_calls": 0})
++        for counter in _AUX_COUNTERS:
++            target[counter] = (target.get(counter) or 0) + (aux.get(counter) or 0)
+         target.setdefault("aux_tasks", []).append(
+-            {"task": aux.get("task") or "", **{key: aux.get(key) or 0 for key in _AUX_COUNTERS}})
++            {"task": aux.get("task") or "", **{counter: aux.get(counter) or 0 for counter in _AUX_COUNTERS}})
+     return sorted(merged.values(), key=_token_volume, reverse=True)
+ 
+ 

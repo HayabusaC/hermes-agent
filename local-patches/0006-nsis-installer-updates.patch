@@ -1,0 +1,288 @@
+diff --git a/apps/desktop/build/installer-protocol.nsh b/apps/desktop/build/installer-protocol.nsh
+new file mode 100644
+index 0000000000..3941197166
+--- /dev/null
++++ b/apps/desktop/build/installer-protocol.nsh
+@@ -0,0 +1,18 @@
++; installer-protocol.nsh — register the hermes:// URL scheme for a NSIS install.
++;
++; electron-builder's top-level `protocols` block only reaches macOS
++; (Info.plist); Windows protocol handlers come from the MSIX manifest
++; extensions or, for NSIS, from these registry writes. Per-user (HKCU) so an
++; unprivileged install never needs elevation.
++
++!macro customInstall
++  WriteRegStr HKCU "Software\Classes\hermes" "" "URL:${PRODUCT_NAME} Protocol"
++  WriteRegStr HKCU "Software\Classes\hermes" "URL Protocol" ""
++  WriteRegStr HKCU "Software\Classes\hermes\DefaultIcon" "" "$INSTDIR\${APP_EXECUTABLE_FILENAME},0"
++  WriteRegStr HKCU "Software\Classes\hermes\shell" "" "open"
++  WriteRegStr HKCU "Software\Classes\hermes\shell\open\command" "" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "%1"'
++!macroend
++
++!macro customUnInstall
++  DeleteRegKey HKCU "Software\Classes\hermes"
++!macroend
+diff --git a/apps/desktop/electron-builder.config.cjs b/apps/desktop/electron-builder.config.cjs
+index 532830508b..21a0187fbe 100644
+--- a/apps/desktop/electron-builder.config.cjs
++++ b/apps/desktop/electron-builder.config.cjs
+@@ -69,6 +69,13 @@ if (!/^\d+\.\d+\.\d+$/.test(electronVersion)) {
+ const macFeed = channelRequest ? null : feedContract.darwinFeed(channel === 'canary' || channel === 'light-canary' ? 'canary' : 'stable', light)
+ const publicUrl = feedContract.feedBaseUrl(process.env.CLOUDFLARE_R2_PUBLIC_URL)
+ 
++// NSIS installs have no OS update owner (MSIX does — see app-installer.ts), so
++// they update through electron-updater against a generic feed. Point
++// HERMES_UPDATE_FEED_URL at the directory holding latest.yml + the installer
++// and electron-builder bakes it into resources/app-update.yml at pack time.
++// Unset keeps the official MSIX/channel behavior untouched.
++const nsisFeedUrl = (process.env.HERMES_UPDATE_FEED_URL || '').trim()
++
+ /** @satisfies {Configuration} */
+ module.exports = {
+   electronVersion,
+@@ -93,7 +100,9 @@ module.exports = {
+   // var (local, or a fork without the R2 vars) keep the github provider, which
+   // is exactly today's behavior. The store build has no feed at all (the Store
+   // owns its distribution and updates).
+-  publish: channelRequest ? null : !channel
++  publish: channelRequest ? null : nsisFeedUrl
++    ? [{ provider: 'generic', url: nsisFeedUrl }]
++    : !channel
+     ? null
+     : [
+         publicUrl
+@@ -235,13 +244,29 @@ module.exports = {
+   win: {
+     executableName: windowsExecutableName,
+     legalTrademarks: displayName,
+-    target: ['msix'],
++    // MSIX is the official (and auto-updating) Windows shape. A self-built
++    // install can ask for the NSIS installer instead:
++    //   $env:HERMES_DESKTOP_WIN_TARGETS = 'nsis'
++    target: (process.env.HERMES_DESKTOP_WIN_TARGETS || 'msix')
++      .split(',')
++      .map(value => value.trim())
++      .filter(Boolean),
+     // The updaters' relaunch waiter is PowerShell run outside the package. The
+     // sealed payload's snapshot omits scripts/, so it ships as a resource
+     // (RELAUNCH_WAITER_SCRIPT in electron/updater/relaunch-waiter.ts).
+     extraResources: [{ from: 'scripts/update-relaunch-waiter.ps1', to: 'update-relaunch-waiter.ps1' }],
+     ...windowsSigning()
+   },
++  // Only used by a NSIS build (HERMES_DESKTOP_WIN_TARGETS=nsis). Per-user,
++  // no elevation, Start Menu + Apps & features entries, and the hermes://
++  // protocol written by build/installer-protocol.nsh — electron-builder's
++  // `protocols` above is macOS-only, so Windows needs the NSIS include.
++  nsis: {
++    oneClick: true,
++    perMachine: false,
++    deleteAppDataOnUninstall: false,
++    include: 'build/installer-protocol.nsh'
++  },
+   msix: {
+     // A store build uses the Partner Center packaging identity (the Store
+     // re-signs + rewrites the publisher on submission); everything else uses
+diff --git a/apps/desktop/electron/main.ts b/apps/desktop/electron/main.ts
+index 5d5a921b9f..612adca785 100644
+--- a/apps/desktop/electron/main.ts
++++ b/apps/desktop/electron/main.ts
+@@ -641,6 +641,7 @@ import { readSourceUpdate, sourceChannelName, type SourceUpdate } from './update
+ import { ExternalStrategy } from './updater/external'
+ import { readUpdatesFeedBaseFromConfig, resolveFeedBaseUrl } from './updater/feed-config'
+ import { createChannelMacStrategy, createMacStrategy } from './updater/mac-client'
++import { WindowsNsisStrategy } from './updater/windows-nsis'
+ import { UpdateOperation } from './updater/operation'
+ import {
+   type ConsumedRelaunch,
+@@ -3506,6 +3507,21 @@ function createNativePackagedStrategy(
+   target?: ChannelTarget
+ ): UpdaterStrategy {
+   if (mechanism === 'electron-updater') {
++    // Windows has no native App Installer feed (that is app-installer/MSIX)
++    // and no Squirrel-style owner, so a NSIS install is updated by the bundled
++    // electron-updater client against the generic feed in app-update.yml.
++    if (process.platform === 'win32') {
++      return new WindowsNsisStrategy({
++        appVersion: app.getVersion(),
++        channel: resolveUpdaterChannelFromStamp(),
++        light: isLightVariant(),
++        feedBaseUrl: resolveDesktopFeedBaseUrl(),
++        log: rememberLog,
++        beforeInstall: teardownBundledBackend,
++        onInstallFailure: restoreBundledBackend
++      })
++    }
++
+     const deps: Parameters<typeof createMacStrategy>[0] = {
+       channel: resolveUpdaterChannelFromStamp(),
+       light: isLightVariant(),
+diff --git a/apps/desktop/electron/updater/windows-nsis.ts b/apps/desktop/electron/updater/windows-nsis.ts
+new file mode 100644
+index 0000000000..2b2c133b7c
+--- /dev/null
++++ b/apps/desktop/electron/updater/windows-nsis.ts
+@@ -0,0 +1,147 @@
++// windows-nsis.ts — the Windows NSIS installer's updater owner.
++//
++// MSIX installs are updated by the OS App Installer (see app-installer.ts);
++// a NSIS install has no such owner, so electron-updater drives it: it fetches
++// `latest.yml` from the generic feed baked into `resources/app-update.yml`,
++// downloads the installer, and runs it after this process exits.
++//
++// The mechanism name stays 'electron-updater' (the same stamp value macOS uses)
++// so the install stamp vocabulary keeps one meaning: "the bundled
++// electron-updater client owns the swap". Platform dispatch happens in main.ts,
++// because the macOS side needs MacUpdater and the version sequencing that goes
++// with it, while Windows needs NsisUpdater over a plain generic feed.
++
++import electronUpdater from 'electron-updater'
++import { gt, valid } from 'semver'
++
++import type { UpdaterApplyResultWire, UpdaterStrategy, UpdaterStatusWire } from './index'
++
++export interface WindowsNsisDeps {
++  appVersion: string
++  /** Release channel baked into the install stamp ('stable' / 'canary'). */
++  channel: string
++  /** The light (remote-only) variant ships no backend to stop before a swap. */
++  light: boolean
++  /** `updates.feed_base_url` from config.yaml, or '' to use app-update.yml. */
++  feedBaseUrl: string
++  log: (message: string) => void
++  /** Release whatever this process owns before the installer replaces it. */
++  beforeInstall: () => Promise<void>
++  /** Undo `beforeInstall` when the install cannot proceed. */
++  onInstallFailure: () => Promise<void>
++}
++
++export class WindowsNsisStrategy implements UpdaterStrategy {
++  readonly mechanism = 'electron-updater'
++
++  private readonly updater: electronUpdater.NsisUpdater
++  private busy = false
++
++  constructor(private readonly deps: WindowsNsisDeps) {
++    // The feed URL is optional: electron-builder always writes
++    // resources/app-update.yml when a `publish` block exists, and letting the
++    // updater read it keeps the baked config authoritative. An explicit
++    // feedBaseUrl (config.yaml override) wins so a self-hosted feed can move
++    // without rebuilding.
++    const url = deps.feedBaseUrl.trim()
++    this.updater = url
++      ? new electronUpdater.NsisUpdater({ provider: 'generic', url })
++      : new electronUpdater.NsisUpdater()
++
++    this.updater.autoDownload = false
++    this.updater.autoInstallOnAppQuit = false
++    this.updater.autoRunAppAfterInstall = true
++    this.updater.allowDowngrade = false
++    if (/^(stable|canary)$/.test(deps.channel)) {
++      this.updater.channel = deps.channel
++    }
++    this.updater.logger = {
++      info: (message?: unknown) => deps.log(`windows updater: ${String(message ?? '')}`),
++      warn: (message?: unknown) => deps.log(`windows updater: ${String(message ?? '')}`),
++      error: (message?: unknown) => deps.log(`windows updater: ${String(message ?? '')}`),
++      debug: () => undefined
++    } as unknown as electronUpdater.NsisUpdater['logger']
++    this.updater.on('error', error => deps.log(`windows updater: ${error.message}`))
++    this.updater.on('download-progress', progress => {
++      deps.log(`windows updater: ${progress.percent.toFixed(0)}% of ${progress.total} bytes`)
++    })
++  }
++
++  async check(): Promise<UpdaterStatusWire> {
++    const base: UpdaterStatusWire = {
++      supported: true,
++      mechanism: this.mechanism,
++      channel: this.deps.channel,
++      currentVersion: this.deps.appVersion,
++      fetchedAt: Date.now()
++    }
++    try {
++      const result = await this.updater.checkForUpdates()
++      const latest = result?.updateInfo?.version ?? null
++      const newer = latest !== null && this.isNewer(latest)
++      return {
++        ...base,
++        latestTag: latest,
++        updateAvailable: newer,
++        ...(newer ? {} : { message: 'You are on the latest version.' })
++      }
++    } catch (error) {
++      const message = error instanceof Error ? error.message : String(error)
++      this.deps.log(`windows updater: check failed: ${message}`)
++      return { ...base, error: message, updateAvailable: false }
++    }
++  }
++
++  async apply(): Promise<UpdaterApplyResultWire> {
++    if (this.busy) {
++      throw new Error('An update operation is already in progress.')
++    }
++    this.busy = true
++    let stopped = false
++    try {
++      const result = await this.updater.checkForUpdates()
++      const latest = result?.updateInfo?.version ?? null
++      if (!latest || !this.isNewer(latest)) {
++        return { ok: true, mechanism: this.mechanism, message: 'You are on the latest version.' }
++      }
++
++      this.deps.log(`windows updater: downloading ${latest}`)
++      await this.updater.downloadUpdate()
++
++      // Hand the machine over before the installer runs: nothing of this
++      // process may still hold the install directory when it is replaced.
++      await this.deps.beforeInstall()
++      stopped = true
++
++      // quitAndInstall must run outside this turn's promise chain, or the
++      // installer waits on the process it is about to replace.
++      setImmediate(() => {
++        try {
++          this.updater.quitAndInstall(false, true)
++        } catch (error) {
++          this.deps.log(`windows updater: quitAndInstall failed: ${String(error)}`)
++        }
++      })
++      return { ok: true, mechanism: this.mechanism, message: `Installing ${latest}.` }
++    } catch (error) {
++      const message = error instanceof Error ? error.message : String(error)
++      this.deps.log(`windows updater: apply failed: ${message}`)
++      if (stopped) {
++        await this.deps.onInstallFailure()
++      }
++      return { ok: false, mechanism: this.mechanism, error: message }
++    } finally {
++      this.busy = false
++    }
++  }
++
++  private isNewer(latest: string): boolean {
++    // Functional API on purpose: the SemVer class shape varies across semver
++    // majors (and `compare` is not on the type this tree installs).
++    if (!valid(latest) || !valid(this.deps.appVersion)) {
++      return latest !== this.deps.appVersion
++    }
++
++    return gt(latest, this.deps.appVersion)
++  }
++}
+diff --git a/apps/desktop/scripts/write-build-stamp.mjs b/apps/desktop/scripts/write-build-stamp.mjs
+index 8339c7c441..2a59eef0ac 100644
+--- a/apps/desktop/scripts/write-build-stamp.mjs
++++ b/apps/desktop/scripts/write-build-stamp.mjs
+@@ -253,7 +253,11 @@ export function buildStampPayload(stamp, env = process.env, platform = process.p
+     bootstrap: 'self',
+     store: 'microsoft-store',
+     bundled: { win32: 'app-installer', darwin: 'electron-updater' }[platform] || 'external',
+-    light: platform === 'darwin' ? 'electron-updater' : 'external'
++    // macOS Light updates through electron-updater's MacUpdater. Windows
++    // Light used to be 'external' (no in-app updater at all); with the NSIS
++    // installer target it owns its swap through NsisUpdater
++    // (electron/updater/windows-nsis.ts), so both platforms share the value.
++    light: 'electron-updater'
+   }[variant]
+   if (!updateMechanism) throw new Error(`Unknown desktop variant: ${variant}`)
+   if (channelBuild && updateMechanism === 'external') throw new Error('Channel builds require a supported native update owner')

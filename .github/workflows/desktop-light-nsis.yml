@@ -1,0 +1,116 @@
+name: desktop-light-nsis
+
+# Builds the Light (remote-only) Windows client as a NSIS installer on a real
+# windows-latest host — the only shape that can produce the win32-only natives
+# (get-windows binding, hud-modifier-monitor.exe).
+#
+# The workflow assumes this branch already carries `local-patches/`, and applies
+# the patches at build time: that keeps the branch a thin layer over upstream
+# `main`, so `git pull` upstream stays a fast-forward and no patch content has
+# to be committed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      feed_url:
+        description: 'electron-updater generic feed URL (directory holding latest.yml). Empty disables in-app updates.'
+        required: false
+        default: ''
+      version:
+        description: 'Installer version override (semver). Empty = nearest upstream tag, else a dated build number.'
+        required: false
+        default: ''
+      skip_patches:
+        description: 'Patch numbers to skip, space separated. Client-only build: 0001 0002 0005'
+        required: false
+        default: '0001 0002 0005'
+
+concurrency:
+  group: desktop-light-nsis-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      CI: 'true'
+      HERMES_DESKTOP_VARIANT: light
+      HERMES_DESKTOP_WIN_TARGETS: nsis
+      HERMES_UPDATE_FEED_URL: ${{ github.event.inputs.feed_url }}
+
+    steps:
+      # Windows runners default to core.autocrlf=true: the checkout would rewrite
+      # the .patch files to CRLF, and a CRLF patch never matches LF context lines.
+      # Pin LF before the checkout so patches, sources and line endings agree.
+      - name: Force LF checkouts
+        shell: pwsh
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # tags: the installer version comes from the upstream tag
+
+      # Upstream's ROOT package.json now requires node >=26 (and npm outside
+      # 11.10.0-11.17.0): `npm ci` refuses to run on the 22 the desktop workspace
+      # alone would accept.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+          cache: npm
+
+      - name: Node toolchain
+        run: node -v; npm -v
+
+      - name: Apply local patches
+        shell: pwsh
+        run: ./local-patches/apply.ps1 -Skip "${{ github.event.inputs.skip_patches }}"
+
+      - name: Install workspace dependencies
+        run: npm ci --no-audit --no-fund
+
+      # apps/desktop/package.json ships version 0.0.0 — upstream injects the real
+      # version at release time. Without this, latest.yml also says 0.0.0 and
+      # electron-updater can never see a newer build (semver never increases).
+      # Order: explicit input → nearest upstream tag → dated build number.
+      - name: Set the installer version
+        shell: pwsh
+        working-directory: apps/desktop
+        run: |
+          $ver = "${{ github.event.inputs.version }}"
+          if (-not $ver) {
+            $tag = git describe --tags --abbrev=0 2>$null
+            if ($tag) { $ver = $tag -replace '^v', '' }
+            else { $ver = "0.$((Get-Date).ToString('yyyyMMdd')).$env:GITHUB_RUN_NUMBER" }
+          }
+          "installer version: $ver  (package.json shipped $(node -p "require('./package.json').version"))"
+          npm pkg set version=$ver
+
+      - name: Typecheck (fails fast on a bad local patch)
+        working-directory: apps/desktop
+        run: npm run typecheck
+
+      - name: Build renderer, main process and installer
+        working-directory: apps/desktop
+        run: |
+          npm run build
+          npm run builder -- --win nsis --publish never
+
+      - name: List artifacts
+        shell: pwsh
+        run: Get-ChildItem apps/desktop/release -File | Select-Object Name, Length | Format-Table -AutoSize
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-light-nsis
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/latest.yml

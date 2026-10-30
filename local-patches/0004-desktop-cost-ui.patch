@@ -1,0 +1,472 @@
+diff --git a/apps/desktop/src/app/command-center/index.tsx b/apps/desktop/src/app/command-center/index.tsx
+index 02a781bdc9..b587e6da01 100644
+--- a/apps/desktop/src/app/command-center/index.tsx
++++ b/apps/desktop/src/app/command-center/index.tsx
+@@ -1,6 +1,7 @@
+ import { compactNumber } from '@hermes/shared'
+ import { type MouseEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+ 
++import { COST_LABELS, cnyFromUsd } from '@/lib/cost-display'
+ import { LogSearchField, useLogSearch } from '@/components/chat/log-search'
+ import { LogTail } from '@/components/chat/log-tail'
+ import { PageLoader } from '@/components/page-loader'
+@@ -652,6 +653,10 @@ function UsagePanel({ error, loading, onRefresh, period, usage }: UsagePanelProp
+           label={cc.statTokens}
+           value={`${compactNumber(totals.total_input)} / ${compactNumber(totals.total_output)}`}
+         />
++        <UsageStat
++          label={COST_LABELS.cost}
++          value={cnyFromUsd(totals.total_actual_cost > 0 ? totals.total_actual_cost : totals.total_estimated_cost)}
++        />
+       </div>
+ 
+       <section>
+diff --git a/apps/desktop/src/app/shell/hooks/use-statusbar-items.tsx b/apps/desktop/src/app/shell/hooks/use-statusbar-items.tsx
+index ae53cc1fe8..4ab62a8e23 100644
+--- a/apps/desktop/src/app/shell/hooks/use-statusbar-items.tsx
++++ b/apps/desktop/src/app/shell/hooks/use-statusbar-items.tsx
+@@ -10,6 +10,8 @@ import { toggleTerminalPane } from '@/app/right-sidebar/terminal/reveal-focus'
+ import { useApprovalModeStatusbarItem } from '@/app/shell/approval-mode-menu'
+ import { ContextMeterDetail, ContextUsagePanel } from '@/app/shell/context-usage-panel'
+ import { GatewayMenuPanel } from '@/app/shell/gateway-menu-panel'
++import { UsageCostIcon, UsageCostPanel, useTodayUsageLabel } from '@/app/shell/usage-cost-panel'
++import { COST_LABELS } from '@/lib/cost-display'
+ import { useChangeWorkspaceItem } from '@/app/shell/hooks/use-change-workspace'
+ import { useContextBreakdown } from '@/app/shell/hooks/use-context-breakdown'
+ import { useFocusedSessionRow } from '@/app/shell/hooks/use-focused-session-row'
+@@ -357,6 +359,7 @@ export function useStatusbarItems({
+   const contextBar = useMemo(() => contextBarLabel(gaugeUsage), [gaugeUsage])
+   // Both ride the same usage payload the context meter does (session.usage
+   // ticks mid-turn, message.complete after) — no extra RPC, no polling.
++  const todayUsage = useTodayUsageLabel()
+   const cacheHit = cacheHitLabel(currentUsage)
+   const planGauge = currentUsage.plan_gauge
+   const planUsed = planGauge ? Math.min(1, Math.max(0, planGauge.used_bp / 10_000)) : 0
+@@ -704,6 +707,17 @@ export function useStatusbarItems({
+         toggleLabel: copy.toggleContextUsage,
+         variant: 'menu'
+       },
++      {
++        icon: <UsageCostIcon />,
++        id: 'usage-cost',
++        label: todayUsage,
++        menuAlign: 'end',
++        menuClassName: 'w-auto border-(--ui-stroke-secondary) p-0',
++        menuContent: <UsageCostPanel />,
++        title: COST_LABELS.todayCost,
++        toggleLabel: COST_LABELS.usageAndCost,
++        variant: 'menu'
++      },
+       {
+         icon: <Layers3 className="size-3" />,
+         id: 'cache-hit-rate',
+diff --git a/apps/desktop/src/app/shell/model-catalog-menu.tsx b/apps/desktop/src/app/shell/model-catalog-menu.tsx
+index 048db76b71..8fefa59c9b 100644
+--- a/apps/desktop/src/app/shell/model-catalog-menu.tsx
++++ b/apps/desktop/src/app/shell/model-catalog-menu.tsx
+@@ -45,7 +45,7 @@ import { useI18n } from '@/i18n'
+ import { triggerHaptic } from '@/lib/haptics'
+ import { isSubmitEnter } from '@/lib/ime'
+ import { catalogProviderMatches, modelOptionsQueryKey, requestModelOptions } from '@/lib/model-options'
+-import { displayModelName, modelDisplayParts } from '@/lib/model-status-label'
++import { displayModelName, modelDeploymentTag, modelDisplayParts } from '@/lib/model-status-label'
+ import { accountResetMs, formatReset, modelResetMs } from '@/lib/provider-limit'
+ import { reasoningEffortLabel } from '@/lib/reasoning-effort'
+ import { foldIncludes, normalize } from '@/lib/text'
+@@ -1043,8 +1043,12 @@ function ModelFamilyRow({
+       : null
+ 
+   const isCurrent = activeId !== null
+-  const { name, tag } = modelDisplayParts(family.id)
+-  const decoration = useModelMenuRowDecoration({ label: name, model: family.id, provider: provider.slug })
++  const { name } = modelDisplayParts(family.id)
++  // The variant word belongs to the NAME here (no separate chip): dropping the
++  // chip must not drop "Flash" from what the row reads as.
++  const label = displayModelName(family.id)
++  const tag = modelDeploymentTag(family.id)
++  const decoration = useModelMenuRowDecoration({ label, model: family.id, provider: provider.slug })
+   const caps = provider.capabilities?.[family.id]
+   const limit = familyLimit(provider, family, isCurrent)
+ 
+@@ -1163,9 +1167,13 @@ function ModelFamilyRow({
+         <span className={cn('flex min-w-0 flex-1 items-center gap-1.5', limit.tone)}>
+           {decoration.icon !== undefined ? <ModelMenuRowIcon icon={decoration.icon} /> : null}
+           <span className="min-w-0 truncate">
+-            <HighlightMatches foldSeparators query={search} text={name} />
++            <HighlightMatches foldSeparators query={search} text={label} />
+           </span>
+-          {tag ? <ModelChip>{tag}</ModelChip> : null}
++          {tag ? (
++            <Badge className="shrink-0 uppercase tracking-wide" data-model-menu-row-badge="" size="xs" variant="outline">
++              {tag}
++            </Badge>
++          ) : null}
+           {decoration.badge ? (
+             <Badge className="shrink-0 uppercase tracking-wide" data-model-menu-row-badge="" size="xs" variant="muted">
+               {decoration.badge}
+@@ -1199,7 +1207,9 @@ function ModelFamilyRow({
+         effort={effEffort}
+         effortWire={isCurrent ? current.effortWire : undefined}
+         fastControl={fastControl}
++        info={caps}
+         isActive={isCurrent}
++        pricing={pricing}
+         model={family.id}
+         onSelectModel={nextModel => controller.select(nextModel, provider.slug)}
+         onSetOptions={patch =>
+diff --git a/apps/desktop/src/app/shell/model-edit-submenu.tsx b/apps/desktop/src/app/shell/model-edit-submenu.tsx
+index c917080632..ba000a71c7 100644
+--- a/apps/desktop/src/app/shell/model-edit-submenu.tsx
++++ b/apps/desktop/src/app/shell/model-edit-submenu.tsx
+@@ -95,6 +95,10 @@ interface ModelEditSubmenuProps {
+   provider: string
+   /** Whether this model supports reasoning effort. */
+   reasoning: boolean
++  /** Provider-declared limits (context window / max output), when the gateway ships them. */
++  info?: { context_window?: number | null; max_output?: number | null } | null
++  /** Live $/Mtok price strings, when the provider ships a price sheet. */
++  pricing?: { input?: string | null; output?: string | null; cache?: string | null } | null
+ }
+ 
+ export function ModelEditSubmenu(props: ModelEditSubmenuProps) {
+@@ -123,7 +127,9 @@ export function ModelOptionsContent({
+   isActive,
+   onSelectModel,
+   onSetOptions,
+-  reasoning
++  reasoning,
++  info,
++  pricing
+ }: ModelEditSubmenuProps) {
+   const { t } = useI18n()
+   const copy = t.shell.modelOptions
+@@ -154,13 +160,38 @@ export function ModelOptionsContent({
+ 
+   const hasFast = fastControl.kind !== 'none'
+   const unsupportedSpeed = fastControl.kind === 'param' && fastControl.canEnable === false
++
++  // What the model IS, before how it is configured: limits and list price.
++  const compactTokens = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n))
++  const metaRows: Array<[string, string]> = []
++  if (info?.context_window) metaRows.push(['上下文', compactTokens(info.context_window)])
++  if (info?.max_output) metaRows.push(['最大输出', compactTokens(info.max_output)])
++  const priceText =
++    pricing && (pricing.input || pricing.output)
++      ? `${pricing.input || '?'} / ${pricing.output || '?'}`
++      : ''
++  if (priceText) metaRows.push(['价格 $/M', priceText])
+   const ultrafastOn = serviceTier === 'ultrafast'
+   const fastOn = fastControl.kind === 'none' ? false : fastControl.on && !ultrafastOn
+ 
+-  return !hasFast && !ultrafastSupported && !reasoning ? (
++  return !hasFast && !ultrafastSupported && !reasoning && metaRows.length === 0 ? (
+     <div className="px-2.5 py-3 text-xs text-(--ui-text-tertiary)">{copy.noOptions}</div>
+   ) : (
+     <>
++      {metaRows.length ? (
++        <>
++          {metaRows.map(([label, value]) => (
++            <div
++              className="pointer-events-none flex items-center gap-2 px-2.5 py-1 text-xs text-(--ui-text-secondary)"
++              key={label}
++            >
++              {label}
++              <span className="ml-auto tabular-nums text-(--ui-text-tertiary)">{value}</span>
++            </div>
++          ))}
++          <DropdownMenuSeparator />
++        </>
++      ) : null}
+       <DropdownMenuLabel className={dropdownMenuSectionLabel}>{copy.options}</DropdownMenuLabel>
+       {showThinkingToggle ? (
+         <DropdownMenuItem className={dropdownMenuRow} onSelect={event => event.preventDefault()}>
+diff --git a/apps/desktop/src/app/shell/usage-cost-panel.tsx b/apps/desktop/src/app/shell/usage-cost-panel.tsx
+new file mode 100644
+index 0000000000..34f5cf8ea1
+--- /dev/null
++++ b/apps/desktop/src/app/shell/usage-cost-panel.tsx
+@@ -0,0 +1,129 @@
++import { useQuery } from '@tanstack/react-query'
++import { useState } from 'react'
++
++import { getUsageAnalytics } from '@/api/models'
++import { cnyFromUsd } from '@/lib/cost-display'
++import { BarChart3 } from '@/lib/icons'
++import { cn } from '@/lib/utils'
++
++const PERIODS = [1, 7, 30] as const
++
++type Period = (typeof PERIODS)[number]
++
++const compact = (n: number | null | undefined): string => {
++  const v = Number(n) || 0
++
++  if (Math.abs(v) >= 1e9) return `${(v / 1e9).toFixed(2)}B`
++  if (Math.abs(v) >= 1e6) return `${(v / 1e6).toFixed(2)}M`
++  if (Math.abs(v) >= 1e3) return `${(v / 1e3).toFixed(1)}k`
++
++  return String(v)
++}
++
++const yuan = cnyFromUsd
++
++const costOf = (estimated: number | null | undefined, actual: number | null | undefined): number => {
++  const billed = Number(actual) || 0
++
++  return billed > 0 ? billed : Number(estimated) || 0
++}
++
++/** Today's spend for the status-bar chip (invoice first, else the estimate). */
++export function useTodayUsageLabel(): string {
++  const { data } = useQuery({
++    queryFn: () => getUsageAnalytics(1),
++    queryKey: ['usage-cost', 1],
++    refetchInterval: 120_000,
++    staleTime: 60_000
++  })
++
++  // The gateway already resolves invoice-first per session; re-deriving it from
++  // per-day sums would swap a whole day to its invoiced subtotal.
++  const total = Number(data?.totals?.total_cost) || 0
++
++  return yuan(total)
++}
++
++export function UsageCostIcon() {
++  return <BarChart3 className="size-3" />
++}
++
++/** The status-bar popover: periods 1/7/30, token + cost detail per model. */
++export function UsageCostPanel() {
++  const [period, setPeriod] = useState<Period>(1)
++  const { data, isFetching } = useQuery({
++    queryFn: () => getUsageAnalytics(period),
++    queryKey: ['usage-cost', period],
++    staleTime: 30_000
++  })
++
++  const totals = data?.totals
++  const rows = data?.by_model ?? []
++  const total = Number(totals?.total_cost) || rows.reduce(
++    (sum, row) => sum + costOf(row.estimated_cost, row.actual_cost),
++    0
++  )
++
++  return (
++    <div className="flex w-[560px] flex-col gap-2 p-2 text-xs">
++      <div className="flex items-center gap-1">
++        <span className="text-[11px] font-semibold text-(--ui-text-secondary)">用量与费用</span>
++        <span className="flex-1" />
++        {PERIODS.map(value => (
++          <button
++            className={cn(
++              'rounded-[5px] border px-1.5 py-px text-[10px] transition-colors',
++              period === value
++                ? 'border-transparent bg-primary text-primary-foreground'
++                : 'border-(--ui-stroke-secondary) text-(--ui-text-secondary)'
++            )}
++            key={value}
++            onClick={() => setPeriod(value)}
++            type="button"
++          >
++            {value}天
++          </button>
++        ))}
++        {isFetching ? <span className="text-[10px] text-(--ui-text-quaternary)">…</span> : null}
++      </div>
++
++      <div className="flex gap-4 text-[11px] text-(--ui-text-secondary)">
++        <span>输入 {compact(totals?.total_input)}</span>
++        <span>输出 {compact(totals?.total_output)}</span>
++        <span>缓存读 {compact(totals?.total_cache_read)}</span>
++        <span className="font-semibold">费用 {yuan(total)}</span>
++      </div>
++
++      <div className="border-t border-(--ui-stroke-secondary)" />
++
++      <table className="w-full border-collapse text-[11px]">
++        <thead>
++          <tr className="text-(--ui-text-quaternary)">
++            <th className="py-0.5 pr-2 text-left font-medium">模型</th>
++            <th className="py-0.5 pr-2 text-left font-medium">provider</th>
++            <th className="py-0.5 pr-2 text-right font-medium">输入</th>
++            <th className="py-0.5 pr-2 text-right font-medium">缓存读</th>
++            <th className="py-0.5 pr-2 text-right font-medium">缓存写</th>
++            <th className="py-0.5 pr-2 text-right font-medium">输出</th>
++            <th className="py-0.5 pr-2 text-right font-medium">费用</th>
++          </tr>
++        </thead>
++        <tbody>
++          {rows.map(row => (
++            <tr className="text-(--ui-text-secondary)" key={row.model + (row.provider || '')}>
++              <td className="max-w-[220px] truncate py-0.5 pr-2 font-mono">{row.model}</td>
++              <td className="py-0.5 pr-2 text-(--ui-text-quaternary)">{row.provider || '—'}</td>
++              <td className="py-0.5 pr-2 text-right tabular-nums">{compact(row.input_tokens)}</td>
++              <td className="py-0.5 pr-2 text-right tabular-nums">{compact(row.cache_read_tokens)}</td>
++              <td className="py-0.5 pr-2 text-right tabular-nums">{compact(row.cache_write_tokens)}</td>
++              <td className="py-0.5 pr-2 text-right tabular-nums">{compact(row.output_tokens)}</td>
++              <td className="py-0.5 pr-2 text-right tabular-nums">{yuan(costOf(row.estimated_cost, row.actual_cost))}</td>
++            </tr>
++          ))}
++        </tbody>
++      </table>
++
++      {!rows.length ? <div className="text-[10px] text-(--ui-text-quaternary)">该区间没有记录</div> : null}
++    </div>
++  )
++}
+diff --git a/apps/desktop/src/app/updates-overlay.tsx b/apps/desktop/src/app/updates-overlay.tsx
+index f86bfc2aed..4e120d3144 100644
+--- a/apps/desktop/src/app/updates-overlay.tsx
++++ b/apps/desktop/src/app/updates-overlay.tsx
+@@ -44,6 +44,8 @@ import {
+   $updateOverlayOpen,
+   $updateOverlayTarget,
+   $updateStatus,
++  BACKEND_UPDATE_APPLY_ENABLED,
++  BACKEND_UPDATE_DISABLED_NOTE,
+   applyBackendUpdate,
+   applyUpdates,
+   checkBackendUpdates,
+@@ -451,9 +453,20 @@ function IdleView({
+       />
+ 
+       <div className="grid gap-2">
+-        <Button className="font-semibold" onClick={onInstall} size="lg">
+-          {rollbackTag ? channelCopy.rollbackAction(rollbackTag) : u.updateNow}
+-        </Button>
++        {target === 'backend' && !BACKEND_UPDATE_APPLY_ENABLED ? (
++          <>
++            {/* The backend's status stays visible (version, channel, how far
++                behind); only its install entry is refused here. */}
++            <Button className="font-semibold" disabled size="lg">
++              {u.updateNow}
++            </Button>
++            <p className="text-center text-xs text-muted-foreground">{BACKEND_UPDATE_DISABLED_NOTE}</p>
++          </>
++        ) : (
++          <Button className="font-semibold" onClick={onInstall} size="lg">
++            {rollbackTag ? channelCopy.rollbackAction(rollbackTag) : u.updateNow}
++          </Button>
++        )}
+         <Button className="font-medium" onClick={onLater} type="button" variant="text">
+           {u.maybeLater}
+         </Button>
+diff --git a/apps/desktop/src/lib/cost-display.ts b/apps/desktop/src/lib/cost-display.ts
+new file mode 100644
+index 0000000000..61ba085fab
+--- /dev/null
++++ b/apps/desktop/src/lib/cost-display.ts
+@@ -0,0 +1,33 @@
++// cost-display.ts — the ONE place a fork-local money decision lives.
++//
++// Hermes stores and reports USD everywhere (usage rows, analytics totals).
++// This fork displays CNY for the cost surfaces, so the conversion and the
++// labels sit here instead of being re-derived in each component: an upgrade
++// that touches the usage panel or the command center leaves exactly one small
++// file to re-check, and no duplicated `* 7` can drift apart.
++
++/** Display-only FX. Not used in any accounting path. */
++export const USD_TO_CNY = 7
++
++/** The currency mark the cost surfaces print. */
++export const CURRENCY_MARK = '¥'
++
++/** `¥12.34` for a positive USD amount, an em dash otherwise. */
++export function cnyFromUsd(usd: number | null | undefined): string {
++  const value = Number(usd)
++
++  if (!Number.isFinite(value) || value <= 0) {
++    return '—'
++  }
++
++  return `${CURRENCY_MARK}${(value * USD_TO_CNY).toFixed(2)}`
++}
++
++/** Component labels for the cost surfaces. They live here, not in the locale
++ *  bundles: those are typed against `en`, so a fork-local key would have to be
++ *  translated across every shipped locale. */
++export const COST_LABELS = {
++  cost: '费用',
++  todayCost: '今日费用',
++  usageAndCost: 'Usage & cost'
++} as const
+diff --git a/apps/desktop/src/lib/model-status-label.ts b/apps/desktop/src/lib/model-status-label.ts
+index 14b4fea2b5..804a334eb4 100644
+--- a/apps/desktop/src/lib/model-status-label.ts
++++ b/apps/desktop/src/lib/model-status-label.ts
+@@ -208,6 +208,13 @@ export function displayModelName(model: string): string {
+   return tag ? `${name} ${tag}` : name
+ }
+ 
++/** Deployment mark for a model id: `LOCAL` for the self-hosted HepAI platform
++ *  models (`hepai/...`), empty for every vendor-hosted API. Rendered in place of
++ *  the variant tag so a row says WHERE the weights run, not what tune it is. */
++export function modelDeploymentTag(model: string): string {
++  return /^hepai\//i.test(model.trim()) ? 'LOCAL' : ''
++}
++
+ /** The variant tag a model id carries (Fast, Flash, Thinking, Preview,
+  *  Latest) — the one taxonomy both the catalog rows and the composer pill
+  *  split on, so distinct ids never render as one model listed twice.
+diff --git a/apps/desktop/src/store/updates.ts b/apps/desktop/src/store/updates.ts
+index 2955d96829..fe33bb2906 100644
+--- a/apps/desktop/src/store/updates.ts
++++ b/apps/desktop/src/store/updates.ts
+@@ -1123,7 +1123,24 @@ async function runBackendUpdate(): Promise<DesktopUpdateApplyResult> {
+   }
+ }
+ 
++/**
++ * Fork policy: a backend (gateway) runtime is upgraded on the machine that runs
++ * it, never from this client. The gateway there is a patched mirror of upstream,
++ * so an in-app update either fails or silently drops those patches — and the
++ * failure is invisible from this side. The panel keeps REPORTING the backend's
++ * status (version, channel, how far behind); only the apply entry is refused.
++ */
++export const BACKEND_UPDATE_APPLY_ENABLED = false
++
++/** Shown where the backend's install button would be. */
++export const BACKEND_UPDATE_DISABLED_NOTE =
++  '已在客户端禁用：请在运行网关的机器上更新（git pull + local-patches/apply.sh）'
++
+ export function applyBackendUpdate(): Promise<DesktopUpdateApplyResult> {
++  if (!BACKEND_UPDATE_APPLY_ENABLED) {
++    return Promise.resolve({ ok: false, error: 'backend-update-disabled-by-client' })
++  }
++
+   if (backendUpdateInFlight) {
+     return backendUpdateInFlight
+   }
+diff --git a/apps/desktop/src/types/hermes.ts b/apps/desktop/src/types/hermes.ts
+index 01788e966a..b599100c07 100644
+--- a/apps/desktop/src/types/hermes.ts
++++ b/apps/desktop/src/types/hermes.ts
+@@ -995,10 +995,18 @@ export interface AnalyticsDailyEntry {
+ 
+ export interface AnalyticsModelEntry {
+   api_calls: number
++  /** Provider-invoiced spend for this row, when any of its sessions settled. */
++  actual_cost?: number
++  /** Cache-write tokens, when the window's rows reported them. */
++  cache_write_tokens?: number
++  cache_read_tokens?: number
+   estimated_cost: number
+   input_tokens: number
+   model: string
+   output_tokens: number
++  /** Billing provider that served the model (``custom`` / ``hepai`` / …). */
++  provider?: string
++  reasoning_tokens?: number
+   sessions: number
+ }
+ 
+@@ -1041,6 +1049,8 @@ export interface AnalyticsTotals {
+   total_actual_cost: number
+   total_api_calls: null | number
+   total_cache_read: null | number
++  /** Invoice-first total: per session ``actual || estimated``, then summed. */
++  total_cost?: number
+   total_estimated_cost: number
+   total_input: null | number
+   total_output: null | number

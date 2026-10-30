@@ -1,0 +1,204 @@
+diff --git a/hermes_cli/inventory.py b/hermes_cli/inventory.py
+index d7d17649a0..d927d4d86c 100644
+--- a/hermes_cli/inventory.py
++++ b/hermes_cli/inventory.py
+@@ -556,6 +556,15 @@ def _apply_capabilities(rows: list[dict], *, metadata_config: dict | None = None
+         slug = row.get("slug") or ""
+         caps: dict[str, dict[str, Any]] = {}
+         read_reasoning_catalog = _reasoning_catalog_reader(slug.lower())
++        # Provider-declared limits (plugin profiles that ship their own catalogue):
++        # read once per row, not per model, so a plugin cache file is not re-read 100x.
++        profile_limits = None
++        try:
++            from providers import get_provider_profile
++
++            profile_limits = get_provider_profile(slug) if slug else None
++        except Exception:
++            profile_limits = None
+         for model in row.get("models") or []:
+             reasoning = True
+             if get_model_capabilities is not None and slug:
+@@ -569,6 +578,29 @@ def _apply_capabilities(rows: list[dict], *, metadata_config: dict | None = None
+             fast = resolve_fast_mode_overrides(
+                 model, provider=slug, base_url=row.get("api_url")) is not None
+             entry: dict[str, Any] = {"fast": fast, "reasoning": reasoning}
++            context = max_out = None
++            if profile_limits is not None:
++                try:
++                    context = profile_limits.get_model_context_length(model)
++                    max_out = profile_limits.get_max_tokens(model)
++                except Exception:
++                    context = max_out = None
++            if not context or not max_out:
++                # Every provider, not just plugin profiles: models.dev carries the
++                # window for vendor-hosted models. Registry-only read, no network.
++                try:
++                    from agent.models_dev import get_model_info
++
++                    info = get_model_info(slug, model, allow_network=False)
++                except Exception:
++                    info = None
++                if info is not None:
++                    context = context or getattr(info, "context_window", None)
++                    max_out = max_out or getattr(info, "max_output_tokens", None)
++            if context:
++                entry["context_window"] = int(context)
++            if max_out:
++                entry["max_output"] = int(max_out)
+             if fast and model_supports_ultrafast(model) and ultrafast_offered(
+                     model, provider=slug, base_url=row.get("api_url")):
+                 entry["ultrafast"] = True
+@@ -936,6 +968,52 @@ def _apply_pricing(rows: list[dict], *, force_fresh_nous_tier: bool = False, cac
+             raw_pricing = get_pricing_for_provider(slug, **pricing_kwargs) or {}
+         except Exception:
+             raw_pricing = {}
++        # Per-model gap fill from the provider's own price sheet (plugin profiles
++        # such as HepAI). Runs for EVERY provider: models.dev may price some rows
++        # of a catalogue and miss others, so fill holes instead of only reacting to
++        # a completely empty map.
++        try:
++            from providers import get_provider_profile
++
++            profile = get_provider_profile(slug)
++            if profile is not None:
++                for model_id in models:
++                    if model_id in raw_pricing:
++                        continue
++                    info = profile.get_model_pricing(model_id)
++                    if not info:
++                        continue
++                    # The hook speaks USD per Mtok; the formatter below wants
++                    # per-token strings, same shape models.dev rows use.
++                    raw_pricing[model_id] = {
++                        "prompt": str((info.get("input") or 0) / 1_000_000),
++                        "completion": str((info.get("output") or 0) / 1_000_000),
++                        "input_cache_read": (
++                            str((info.get("cache_read") or 0) / 1_000_000)
++                            if info.get("cache_read") else ""
++                        ),
++                    }
++        except Exception:
++            pass
++        # Last-resort price fill from the models.dev registry snapshot (no network):
++        # providers whose price API is cold still get a list price in the picker.
++        try:
++            from agent.models_dev import get_model_info as _mdev_info
++
++            for model_id in models:
++                if model_id in raw_pricing:
++                    continue
++                meta = _mdev_info(slug, model_id, allow_network=False)
++                cost_in = getattr(meta, "cost_input", None)
++                cost_out = getattr(meta, "cost_output", None)
++                if cost_in is None and cost_out is None:
++                    continue
++                raw_pricing[model_id] = {
++                    "prompt": str(float(cost_in or 0) / 1_000_000),
++                    "completion": str(float(cost_out or 0) / 1_000_000),
++                }
++        except Exception:
++            pass
+         cached_nous_tier: Optional[bool] = None
+         plan_usage = _attach_nous_plan_usage(row, warm=not cached_only) if slug == "nous" else None
+         if slug == "nous" and cached_only:
+diff --git a/hermes_cli/providers.py b/hermes_cli/providers.py
+index 80b49b3d22..ab460325aa 100644
+--- a/hermes_cli/providers.py
++++ b/hermes_cli/providers.py
+@@ -472,6 +472,18 @@ def determine_api_mode(provider: str, base_url: str = "", model: str = "") -> st
+         return nous_api_mode(model)
+     pdef = get_provider(provider)
+     if pdef is not None:
++        # A plugin profile may split its catalogue across wires (per-model api_mode).
++        if model:
++            try:
++                from providers import get_provider_profile
++                from agent.transports import registered_api_modes
++
++                prof = get_provider_profile(provider)
++                override = prof.api_mode_for_model(model) if prof is not None else None
++                if override and override in registered_api_modes():
++                    return override
++            except Exception:
++                pass
+         if pdef.transport in TRANSPORT_TO_API_MODE:
+             return TRANSPORT_TO_API_MODE[pdef.transport]
+         # A plugin profile's transport IS its api_mode when a plugin registered that dialect.
+diff --git a/hermes_cli/runtime_provider.py b/hermes_cli/runtime_provider.py
+index da99b41c20..d0991390b9 100644
+--- a/hermes_cli/runtime_provider.py
++++ b/hermes_cli/runtime_provider.py
+@@ -1080,6 +1080,17 @@ def resolve_runtime_provider(*, requested: Optional[str] = None, explicit_api_ke
+         logger.info("model.openai_runtime=codex_app_server overrides the %s runtime (source=%s); its credential/endpoint "
+                     "is not used — the app-server authenticates with its own login", runtime.get("provider"), runtime.get("source"))
+     runtime["api_mode"] = api_mode
++    # Per-model endpoint: gateways that split their API surfaces across paths.
++    if target_model:
++        try:
++            from providers import get_provider_profile
++
++            prof = get_provider_profile(runtime.get("provider") or requested_provider)
++            override = prof.base_url_for_model(target_model) if prof is not None else None
++            if override:
++                runtime["base_url"] = override
++        except Exception:
++            pass
+     return runtime
+ 
+ 
+diff --git a/providers/base.py b/providers/base.py
+index 3610e20af5..cb4c5e4893 100644
+--- a/providers/base.py
++++ b/providers/base.py
+@@ -393,6 +393,37 @@ class ProviderProfile:
+         """Provider-qualified context bound; explicit user overrides take precedence."""
+         return None
+ 
++    def base_url_for_model(self, model: str) -> str | None:
++        """Per-model endpoint override, or None for the profile's ``base_url``.
++
++        Companion to :meth:`api_mode_for_model` for gateways whose surfaces live
++        at different paths (HepAI: ``/apiv2`` for chat+responses,
++        ``/apiv2/anthropic`` for Messages).
++        """
++        return None
++
++    def api_mode_for_model(self, model: str) -> str | None:
++        """Per-model wire protocol for this provider, or None for the profile default.
++
++        Some gateways serve different models on different API surfaces (HepAI:
++        ``/responses`` for GPT, ``/anthropic/v1/messages`` for Claude, chat
++        completions for everything else). ``determine_api_mode`` consults this
++        before the profile-wide ``api_mode``; the returned value must be a
++        registered api_mode (``chat_completions``, ``anthropic_messages``,
++        ``codex_responses``, …).
++        """
++        return None
++
++    def get_model_pricing(self, model: str) -> dict[str, Any] | None:
++        """Per-model list price in USD per million tokens, or None.
++
++        Consumed by the picker payload (``inventory._apply_pricing``) when
++        models.dev has no entry for this provider — gateways that publish their
++        own catalogue (HepAI) price rows the price table would otherwise leave
++        blank. Keys: ``input``, ``output``, ``cache_read``, ``cache_write``.
++        """
++        return None
++
+     def get_usage_cost(self, model: str, usage: Any) -> Any | None:
+         """Optional CostResult from canonical usage; distinguish estimates from invoices."""
+         return None
+diff --git a/tui_gateway/contracts/config_free_tier_control.py b/tui_gateway/contracts/config_free_tier_control.py
+index a7346e3f0a..6f97ac031f 100644
+--- a/tui_gateway/contracts/config_free_tier_control.py
++++ b/tui_gateway/contracts/config_free_tier_control.py
+@@ -475,6 +475,9 @@ class ModelCapabilities(Result):
+     ultrafast: bool = False
+     reasoning: bool
+     can_disable_reasoning: bool | None = None
++    # Provider-declared limits (plugin profiles that publish their own catalogue).
++    context_window: int | None = None
++    max_output: int | None = None
+ 
+ 
+ class ProviderLimit(Result):

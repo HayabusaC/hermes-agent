@@ -1,0 +1,157 @@
+diff --git a/agent/insights.py b/agent/insights.py
+index 1f5b329b34..88a0a60266 100644
+--- a/agent/insights.py
++++ b/agent/insights.py
+@@ -489,7 +489,12 @@ class InsightsEngine:
+         # Cost breakdown — surface the three buckets so subscription-included and unknown-cost sessions are
+         # visible instead of silently collapsing to $0. See #77223.
+         est_cost = o.get("estimated_cost", 0.0)
+-        values = (_fmt_est_cost(est_cost) if est_cost > 0 else "", o.get("included_cost_sessions", 0), o.get("unknown_cost_sessions", 0))
++        act_cost = o.get("actual_cost", 0.0)
++        # ``actual_cost`` is provider-invoiced spend (``cost_status='actual'``, e.g. HepAI
++        # settlement or a provider cost API). It is reported alongside the estimate — never
++        # summed with it — so a reconciled session is not counted twice.
++        values = (_fmt_est_cost(est_cost) if est_cost > 0 else "", o.get("included_cost_sessions", 0),
++                  o.get("unknown_cost_sessions", 0), _fmt_est_cost(act_cost) if act_cost > 0 else "")
+         return [tpl.format(v) for tpl, v in zip(templates, values) if v]
+ 
+     def format_terminal(self, report: dict) -> str:
+@@ -526,7 +531,8 @@ class InsightsEngine:
+         lines += [f"  Avg msgs/session:  {o['avg_messages_per_session']:.1f}", ""]
+         # Cost buckets: show included/unknown sessions instead of collapsing to $0.
+         cost_lines = self._cost_lines(o, ("  Estimated:          {}", "  Included:           {} session(s) (subscription — no provider invoice)",
+-                                          "  Unknown:            {} session(s) (no pricing data)"))
++                                          "  Unknown:            {} session(s) (no pricing data)",
++                                          "  Actual (invoiced):  {}"))
+         if cost_lines:
+             lines += self._section("💰 Cost") + cost_lines + [""]
+         if report["models"]:
+@@ -584,7 +590,8 @@ class InsightsEngine:
+         if o["total_hours"] > 0:
+             lines.append(f"**Active time:** ~{format_duration_compact(o['total_hours'] * 3600)} | **Avg session:** ~{format_duration_compact(o['avg_session_duration'])}")
+         lines.append("")
+-        cost_parts = self._cost_lines(o, ("{} estimated", "{} included (subscription)", "{} unknown"))
++        cost_parts = self._cost_lines(o, ("{} estimated", "{} included (subscription)", "{} unknown",
++                                          "{} actual (invoiced)"))
+         if cost_parts:
+             lines += [f"**Cost:** {' | '.join(cost_parts)}", ""]
+         if report["models"]:
+diff --git a/gateway/run_turn.py b/gateway/run_turn.py
+index 82f10cbc1e..3a87a87dfe 100644
+--- a/gateway/run_turn.py
++++ b/gateway/run_turn.py
+@@ -2385,6 +2385,10 @@ class GatewayTurnMixin(GatewayTurnPrepareMixin, GatewayTurnHygieneMixin, Gateway
+             await self._run_agent_finalize_streaming_tts(turn_ctx, adapter)
+             pending_event, pending = await self._run_agent_drain_pending(result, adapter, source, session_key)
+             if pending_event or pending:
++                # Bubble cleanup must be scheduled on THIS exit path too: the early return used to
++                # skip the call below the finally, leaking this turn's progress bubbles whenever the
++                # turn ended with a queued/pending message (e.g. a background-completion notice).
++                self._run_agent_schedule_bubble_cleanup(response, _cleanup_adapter, turn_ctx)
+                 return await self._run_agent_queued_followup(
+                     turn_ctx, adapter, pending, pending_event, response, result, stream_task,
+                 )
+diff --git a/gateway/run_turn_prepare.py b/gateway/run_turn_prepare.py
+index 1085f99a5a..c64def21ce 100644
+--- a/gateway/run_turn_prepare.py
++++ b/gateway/run_turn_prepare.py
+@@ -650,7 +650,7 @@ class GatewayTurnPrepareMixin:
+         (inbound text rejected)."""
+         from gateway.run import _load_gateway_config
+         from tools.approval_yolo import restore_gateway_yolo
+-        _was_auto_reset, _is_new_session = await self._hmwa_open_session(session_entry, session_key, source)
++        _was_auto_reset, _is_new_session = await self._hmwa_open_session(session_entry, session_key, source)  # noqa: F841 - newness now comes from the transcript
+         restore_gateway_yolo(session_key, session_entry.yolo)  # None: TurnRunner seeds the launch policy
+         context = build_session_context(source, self.config, session_entry)
+         # Session context variables for tools (task-local, concurrency-safe)
+@@ -687,10 +687,8 @@ class GatewayTurnPrepareMixin:
+         # With no text (e.g. voice-only), retain the existing enriched-message title fallback.
+         title_user_message = event.text or None
+ 
+-        # Auto-load bound skill(s) only on NEW sessions; ongoing ones carry the content in history.
++        # Channel-bound skill(s) are injected below, once the transcript is known (see there).
+         _auto = getattr(event, "auto_skill", None)
+-        if _is_new_session and _auto:
+-            self._hmwa_auto_load_skills(event, _auto, _quick_key, session_key)
+ 
+         await self._hmwa_acquire_turn_lease(_quick_key, run_generation, session_entry, _session_env_tokens)
+ 
+@@ -710,6 +708,16 @@ class GatewayTurnPrepareMixin:
+             from gateway.session_results import record_unexecuted_failure
+             return record_unexecuted_failure(t("gateway.errors.history_unavailable")), _session_env_tokens
+ 
++        # Channel-bound skill(s): an EMPTY transcript is the authoritative "no turns yet" signal.
++        # The ``created_at == updated_at`` test in ``_hmwa_open_session`` is not reliable — admission
++        # preflight (session_authority.register -> get_or_create_session) touches the route's activity
++        # clock before the turn starts, so a bound skill would never load on the very message that
++        # opens the session. Bookkeeping rows (session_meta/system) do not count as turns; ongoing
++        # sessions already carry the payload in their history.
++        _has_turns = any(m.get("role") in ("user", "assistant", "tool") for m in history)
++        if _auto and not _has_turns:
++            self._hmwa_auto_load_skills(event, _auto, _quick_key, session_key)
++
+         await self._hmwa_first_contact_notes(source, history, turn_sidecar_notes, internal=event.internal)
+ 
+         # Voice channel state rides the user message ONLY when changed (in the system prompt it
+diff --git a/gateway/session_authority.py b/gateway/session_authority.py
+index 1629fa5b5a..5c06b9cdce 100644
+--- a/gateway/session_authority.py
++++ b/gateway/session_authority.py
+@@ -10,6 +10,8 @@ import contextlib
+ from contextvars import ContextVar
+ from dataclasses import asdict, dataclass, field
+ from functools import partial
++import logging
++import os
+ import sqlite3
+ from types import SimpleNamespace
+ import uuid
+@@ -256,15 +258,45 @@ class SessionAuthority:
+     def register(self, source):
+         return self._publish_route(source, *self._reserve_route(source))
+ 
++    def _platform_workspace(self, platform):
++        """The working directory a messaging platform's sessions are minted with.
++
++        ``platforms.<name>.workspace`` (an absolute or ``~`` path): a session's Desktop project is
++        derived from its stored ``cwd``, and platform sessions are otherwise created without one —
++        every Slack/Telegram conversation then piles into the synthetic "Home" bucket instead of a
++        project. Unset (the default) keeps the historical NULL cwd, so single-profile installs and
++        every platform that does not opt in are byte-identical to before.
++        """
++        config = getattr(self.runner, "config", None)
++        platform_cfg = (getattr(config, "platforms", None) or {}).get(platform)
++        raw = str((getattr(platform_cfg, "extra", None) or {}).get("workspace") or "").strip()
++        if not raw:
++            return None
++        path = os.path.abspath(os.path.expanduser(raw))
++        if not os.path.isdir(path):
++            logging.getLogger(__name__).warning(
++                "platform %s workspace is not a directory, keeping the session cwd unset: %s",
++                getattr(platform, "value", platform), path)
++            return None
++        return path
++
+     def _reserve_route(self, source):
+         """The durable half of ``register`` (routing entry + reserved row): thread-safe, so async
+         callers run it off the owner loop and publish the live entry on the loop."""
+         self._require_admission_open()
+         entry = self.runner.session_store.get_or_create_session(source)
+         sid = self.logical_owner(entry.session_id)
+-        # SessionStore reserves routing metadata before the first AIAgent exists.
+-        if self.db.get_session(sid) is None:
+-            self.db.create_session(sid, source=source.platform.value)
++        # SessionStore reserves routing metadata before the first AIAgent exists — and mints the row
++        # itself (``session_recovery._session_create_kwargs``), so the cwd is settled on the existing
++        # row instead of passed to the INSERT (same ``get_session`` read the create branch needed).
++        existing = self.db.get_session(sid)
++        workspace = self._platform_workspace(source.platform)
++        if existing is None:
++            self.db.create_session(sid, source=source.platform.value, cwd=workspace)
++        elif workspace and not str(existing.get("cwd") or "").strip():
++            # A platform session's Desktop project is derived from its stored cwd; leaving it NULL
++            # files every conversation under the synthetic "Home" bucket.
++            self.db.update_session_cwd(sid, workspace, replace_git_meta=False)
+         return sid, entry.session_key
+ 
+     def _publish_route(self, source, sid, route):

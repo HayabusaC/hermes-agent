@@ -17,13 +17,9 @@ on:
         required: false
         default: ''
       version:
-        description: 'Installer version override (semver). Empty = nearest upstream tag, else a dated build number.'
+        description: 'Installer version override (semver). Empty = upstream release tag + run number (e.g. 0.22.5-14).'
         required: false
         default: ''
-      skip_patches:
-        description: 'Patch numbers to skip, space separated. Client-only build: 0001 0002 0005'
-        required: false
-        default: '0001 0002 0005'
 
 concurrency:
   group: desktop-light-nsis-${{ github.ref }}

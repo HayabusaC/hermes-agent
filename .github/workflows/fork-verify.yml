@@ -1,0 +1,69 @@
+name: fork-verify
+
+# A cheap gate on every push to this fork's main.
+#
+# Why it exists: the server's checkout is NOT mirroring the fork in real time —
+# the daily sync merges upstream and pushes here unattended, and `hermes update`
+# on the server then fast-forwards onto whatever landed. Without a gate nobody
+# notices a merge that quietly broke syntax. This is deliberately dependency-free
+# (no pip install of the project, no network): it runs in well under a minute, so
+# it can fire on every push without fighting the build for a runner.
+#
+# What it does NOT do: unit tests. Upstream's suites need their private
+# blacksmith runners and their secrets; a fork cannot run them (they never even
+# started — they queued on labels no runner in this repo provides).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: fork-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Python syntax (whole tree, no deps needed)
+        run: python -m compileall -q agent gateway hermes_cli providers tui_gateway tools
+
+      - name: Local commits still present
+        run: |
+          set -eu
+          fail=0
+          check() { if grep -rq "$2" "$1"; then echo "  ok   $1 ~ $3"; else echo "::error file=$1::$3 missing"; fail=1; fi; }
+          check hermes_cli/sessions_release.py "def cmd_release" "sessions release command"
+          check hermes_cli/sessions_cmd.py '"release": _cmd_release' "release wiring"
+          check hermes_cli/web_routers/analytics.py "total_cost" "invoice-first total_cost"
+          check providers/base.py "api_mode_for_model" "per-model api mode hook"
+          check hermes_cli/inventory.py "get_model_pricing" "model pricing hook"
+          check apps/desktop/electron/updater/windows-nsis.ts "class WindowsNsisStrategy" "NSIS updater strategy"
+          check apps/desktop/src/store/updates.ts "BACKEND_UPDATE_APPLY_ENABLED" "backend update read-only"
+          exit $fail
+
+      - name: Only our workflow is present
+        run: |
+          n=$(ls .github/workflows/*.y*ml | wc -l)
+          echo "workflow files: $n"
+          ls .github/workflows/
+          [ "$n" -eq 2 ] || { echo "::error::expected exactly 2 workflows (fork-verify, desktop-light-nsis)"; exit 1; }
+
+      - name: Installer version scheme
+        run: |
+          grep -q "ls-remote --tags --refs https://github.com/NousResearch/hermes-agent.git" \
+            .github/workflows/desktop-light-nsis.yml \
+            || { echo "::error::version base must come from upstream tags"; exit 1; }
+          grep -q 'publish: the NSIS feed' .github/workflows/desktop-light-nsis.yml || true
+          echo "version scheme ok"

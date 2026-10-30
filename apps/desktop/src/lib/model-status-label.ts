@@ -208,6 +208,13 @@ export function displayModelName(model: string): string {
   return tag ? `${name} ${tag}` : name
 }
 
+/** Deployment mark for a model id: `LOCAL` for the self-hosted HepAI platform
+ *  models (`hepai/...`), empty for every vendor-hosted API. Rendered in place of
+ *  the variant tag so a row says WHERE the weights run, not what tune it is. */
+export function modelDeploymentTag(model: string): string {
+  return /^hepai\//i.test(model.trim()) ? 'LOCAL' : ''
+}
+
 /** The variant tag a model id carries (Fast, Flash, Thinking, Preview,
  *  Latest) — the one taxonomy both the catalog rows and the composer pill
  *  split on, so distinct ids never render as one model listed twice.

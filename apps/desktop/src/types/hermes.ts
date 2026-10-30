@@ -995,10 +995,18 @@ export interface AnalyticsDailyEntry {
 
 export interface AnalyticsModelEntry {
   api_calls: number
+  /** Provider-invoiced spend for this row, when any of its sessions settled. */
+  actual_cost?: number
+  /** Cache-write tokens, when the window's rows reported them. */
+  cache_write_tokens?: number
+  cache_read_tokens?: number
   estimated_cost: number
   input_tokens: number
   model: string
   output_tokens: number
+  /** Billing provider that served the model (``custom`` / ``hepai`` / …). */
+  provider?: string
+  reasoning_tokens?: number
   sessions: number
 }
 
@@ -1041,6 +1049,8 @@ export interface AnalyticsTotals {
   total_actual_cost: number
   total_api_calls: null | number
   total_cache_read: null | number
+  /** Invoice-first total: per session ``actual || estimated``, then summed. */
+  total_cost?: number
   total_estimated_cost: number
   total_input: null | number
   total_output: null | number

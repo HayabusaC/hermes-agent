@@ -10,6 +10,8 @@ import { toggleTerminalPane } from '@/app/right-sidebar/terminal/reveal-focus'
 import { useApprovalModeStatusbarItem } from '@/app/shell/approval-mode-menu'
 import { ContextMeterDetail, ContextUsagePanel } from '@/app/shell/context-usage-panel'
 import { GatewayMenuPanel } from '@/app/shell/gateway-menu-panel'
+import { UsageCostIcon, UsageCostPanel, useTodayUsageLabel } from '@/app/shell/usage-cost-panel'
+import { COST_LABELS } from '@/lib/cost-display'
 import { useChangeWorkspaceItem } from '@/app/shell/hooks/use-change-workspace'
 import { useContextBreakdown } from '@/app/shell/hooks/use-context-breakdown'
 import { useFocusedSessionRow } from '@/app/shell/hooks/use-focused-session-row'
@@ -357,6 +359,7 @@ export function useStatusbarItems({
   const contextBar = useMemo(() => contextBarLabel(gaugeUsage), [gaugeUsage])
   // Both ride the same usage payload the context meter does (session.usage
   // ticks mid-turn, message.complete after) — no extra RPC, no polling.
+  const todayUsage = useTodayUsageLabel()
   const cacheHit = cacheHitLabel(currentUsage)
   const planGauge = currentUsage.plan_gauge
   const planUsed = planGauge ? Math.min(1, Math.max(0, planGauge.used_bp / 10_000)) : 0
@@ -702,6 +705,17 @@ export function useStatusbarItems({
           <ContextUsagePanel breakdown={contextBreakdown} loading={contextBreakdownLoading} usage={gaugeUsage} />
         ),
         toggleLabel: copy.toggleContextUsage,
+        variant: 'menu'
+      },
+      {
+        icon: <UsageCostIcon />,
+        id: 'usage-cost',
+        label: todayUsage,
+        menuAlign: 'end',
+        menuClassName: 'w-auto border-(--ui-stroke-secondary) p-0',
+        menuContent: <UsageCostPanel />,
+        title: COST_LABELS.todayCost,
+        toggleLabel: COST_LABELS.usageAndCost,
         variant: 'menu'
       },
       {

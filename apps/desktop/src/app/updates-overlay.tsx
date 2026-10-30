@@ -44,6 +44,8 @@ import {
   $updateOverlayOpen,
   $updateOverlayTarget,
   $updateStatus,
+  BACKEND_UPDATE_APPLY_ENABLED,
+  BACKEND_UPDATE_DISABLED_NOTE,
   applyBackendUpdate,
   applyUpdates,
   checkBackendUpdates,
@@ -451,9 +453,20 @@ function IdleView({
       />
 
       <div className="grid gap-2">
-        <Button className="font-semibold" onClick={onInstall} size="lg">
-          {rollbackTag ? channelCopy.rollbackAction(rollbackTag) : u.updateNow}
-        </Button>
+        {target === 'backend' && !BACKEND_UPDATE_APPLY_ENABLED ? (
+          <>
+            {/* The backend's status stays visible (version, channel, how far
+                behind); only its install entry is refused here. */}
+            <Button className="font-semibold" disabled size="lg">
+              {u.updateNow}
+            </Button>
+            <p className="text-center text-xs text-muted-foreground">{BACKEND_UPDATE_DISABLED_NOTE}</p>
+          </>
+        ) : (
+          <Button className="font-semibold" onClick={onInstall} size="lg">
+            {rollbackTag ? channelCopy.rollbackAction(rollbackTag) : u.updateNow}
+          </Button>
+        )}
         <Button className="font-medium" onClick={onLater} type="button" variant="text">
           {u.maybeLater}
         </Button>

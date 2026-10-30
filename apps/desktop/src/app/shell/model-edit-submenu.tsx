@@ -95,6 +95,10 @@ interface ModelEditSubmenuProps {
   provider: string
   /** Whether this model supports reasoning effort. */
   reasoning: boolean
+  /** Provider-declared limits (context window / max output), when the gateway ships them. */
+  info?: { context_window?: number | null; max_output?: number | null } | null
+  /** Live $/Mtok price strings, when the provider ships a price sheet. */
+  pricing?: { input?: string | null; output?: string | null; cache?: string | null } | null
 }
 
 export function ModelEditSubmenu(props: ModelEditSubmenuProps) {
@@ -123,7 +127,9 @@ export function ModelOptionsContent({
   isActive,
   onSelectModel,
   onSetOptions,
-  reasoning
+  reasoning,
+  info,
+  pricing
 }: ModelEditSubmenuProps) {
   const { t } = useI18n()
   const copy = t.shell.modelOptions
@@ -154,13 +160,38 @@ export function ModelOptionsContent({
 
   const hasFast = fastControl.kind !== 'none'
   const unsupportedSpeed = fastControl.kind === 'param' && fastControl.canEnable === false
+
+  // What the model IS, before how it is configured: limits and list price.
+  const compactTokens = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n))
+  const metaRows: Array<[string, string]> = []
+  if (info?.context_window) metaRows.push(['上下文', compactTokens(info.context_window)])
+  if (info?.max_output) metaRows.push(['最大输出', compactTokens(info.max_output)])
+  const priceText =
+    pricing && (pricing.input || pricing.output)
+      ? `${pricing.input || '?'} / ${pricing.output || '?'}`
+      : ''
+  if (priceText) metaRows.push(['价格 $/M', priceText])
   const ultrafastOn = serviceTier === 'ultrafast'
   const fastOn = fastControl.kind === 'none' ? false : fastControl.on && !ultrafastOn
 
-  return !hasFast && !ultrafastSupported && !reasoning ? (
+  return !hasFast && !ultrafastSupported && !reasoning && metaRows.length === 0 ? (
     <div className="px-2.5 py-3 text-xs text-(--ui-text-tertiary)">{copy.noOptions}</div>
   ) : (
     <>
+      {metaRows.length ? (
+        <>
+          {metaRows.map(([label, value]) => (
+            <div
+              className="pointer-events-none flex items-center gap-2 px-2.5 py-1 text-xs text-(--ui-text-secondary)"
+              key={label}
+            >
+              {label}
+              <span className="ml-auto tabular-nums text-(--ui-text-tertiary)">{value}</span>
+            </div>
+          ))}
+          <DropdownMenuSeparator />
+        </>
+      ) : null}
       <DropdownMenuLabel className={dropdownMenuSectionLabel}>{copy.options}</DropdownMenuLabel>
       {showThinkingToggle ? (
         <DropdownMenuItem className={dropdownMenuRow} onSelect={event => event.preventDefault()}>

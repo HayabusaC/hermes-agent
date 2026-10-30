@@ -1,6 +1,7 @@
 import { compactNumber } from '@hermes/shared'
 import { type MouseEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { COST_LABELS, cnyFromUsd } from '@/lib/cost-display'
 import { LogSearchField, useLogSearch } from '@/components/chat/log-search'
 import { LogTail } from '@/components/chat/log-tail'
 import { PageLoader } from '@/components/page-loader'
@@ -651,6 +652,10 @@ function UsagePanel({ error, loading, onRefresh, period, usage }: UsagePanelProp
         <UsageStat
           label={cc.statTokens}
           value={`${compactNumber(totals.total_input)} / ${compactNumber(totals.total_output)}`}
+        />
+        <UsageStat
+          label={COST_LABELS.cost}
+          value={cnyFromUsd(totals.total_actual_cost > 0 ? totals.total_actual_cost : totals.total_estimated_cost)}
         />
       </div>
 

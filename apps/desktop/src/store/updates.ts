@@ -1123,7 +1123,24 @@ async function runBackendUpdate(): Promise<DesktopUpdateApplyResult> {
   }
 }
 
+/**
+ * Fork policy: a backend (gateway) runtime is upgraded on the machine that runs
+ * it, never from this client. The gateway there is a patched mirror of upstream,
+ * so an in-app update either fails or silently drops those patches — and the
+ * failure is invisible from this side. The panel keeps REPORTING the backend's
+ * status (version, channel, how far behind); only the apply entry is refused.
+ */
+export const BACKEND_UPDATE_APPLY_ENABLED = false
+
+/** Shown where the backend's install button would be. */
+export const BACKEND_UPDATE_DISABLED_NOTE =
+  '已在客户端禁用：请在运行网关的机器上更新（git pull + local-patches/apply.sh）'
+
 export function applyBackendUpdate(): Promise<DesktopUpdateApplyResult> {
+  if (!BACKEND_UPDATE_APPLY_ENABLED) {
+    return Promise.resolve({ ok: false, error: 'backend-update-disabled-by-client' })
+  }
+
   if (backendUpdateInFlight) {
     return backendUpdateInFlight
   }

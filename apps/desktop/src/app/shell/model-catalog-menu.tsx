@@ -45,7 +45,7 @@ import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
 import { isSubmitEnter } from '@/lib/ime'
 import { catalogProviderMatches, modelOptionsQueryKey, requestModelOptions } from '@/lib/model-options'
-import { displayModelName, modelDisplayParts } from '@/lib/model-status-label'
+import { displayModelName, modelDeploymentTag, modelDisplayParts } from '@/lib/model-status-label'
 import { accountResetMs, formatReset, modelResetMs } from '@/lib/provider-limit'
 import { reasoningEffortLabel } from '@/lib/reasoning-effort'
 import { foldIncludes, normalize } from '@/lib/text'
@@ -1043,8 +1043,12 @@ function ModelFamilyRow({
       : null
 
   const isCurrent = activeId !== null
-  const { name, tag } = modelDisplayParts(family.id)
-  const decoration = useModelMenuRowDecoration({ label: name, model: family.id, provider: provider.slug })
+  const { name } = modelDisplayParts(family.id)
+  // The variant word belongs to the NAME here (no separate chip): dropping the
+  // chip must not drop "Flash" from what the row reads as.
+  const label = displayModelName(family.id)
+  const tag = modelDeploymentTag(family.id)
+  const decoration = useModelMenuRowDecoration({ label, model: family.id, provider: provider.slug })
   const caps = provider.capabilities?.[family.id]
   const limit = familyLimit(provider, family, isCurrent)
 
@@ -1163,9 +1167,13 @@ function ModelFamilyRow({
         <span className={cn('flex min-w-0 flex-1 items-center gap-1.5', limit.tone)}>
           {decoration.icon !== undefined ? <ModelMenuRowIcon icon={decoration.icon} /> : null}
           <span className="min-w-0 truncate">
-            <HighlightMatches foldSeparators query={search} text={name} />
+            <HighlightMatches foldSeparators query={search} text={label} />
           </span>
-          {tag ? <ModelChip>{tag}</ModelChip> : null}
+          {tag ? (
+            <Badge className="shrink-0 uppercase tracking-wide" data-model-menu-row-badge="" size="xs" variant="outline">
+              {tag}
+            </Badge>
+          ) : null}
           {decoration.badge ? (
             <Badge className="shrink-0 uppercase tracking-wide" data-model-menu-row-badge="" size="xs" variant="muted">
               {decoration.badge}
@@ -1199,7 +1207,9 @@ function ModelFamilyRow({
         effort={effEffort}
         effortWire={isCurrent ? current.effortWire : undefined}
         fastControl={fastControl}
+        info={caps}
         isActive={isCurrent}
+        pricing={pricing}
         model={family.id}
         onSelectModel={nextModel => controller.select(nextModel, provider.slug)}
         onSetOptions={patch =>

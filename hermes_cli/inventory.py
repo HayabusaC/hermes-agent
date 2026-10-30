@@ -556,6 +556,15 @@ def _apply_capabilities(rows: list[dict], *, metadata_config: dict | None = None
         slug = row.get("slug") or ""
         caps: dict[str, dict[str, Any]] = {}
         read_reasoning_catalog = _reasoning_catalog_reader(slug.lower())
+        # Provider-declared limits (plugin profiles that ship their own catalogue):
+        # read once per row, not per model, so a plugin cache file is not re-read 100x.
+        profile_limits = None
+        try:
+            from providers import get_provider_profile
+
+            profile_limits = get_provider_profile(slug) if slug else None
+        except Exception:
+            profile_limits = None
         for model in row.get("models") or []:
             reasoning = True
             if get_model_capabilities is not None and slug:
@@ -569,6 +578,29 @@ def _apply_capabilities(rows: list[dict], *, metadata_config: dict | None = None
             fast = resolve_fast_mode_overrides(
                 model, provider=slug, base_url=row.get("api_url")) is not None
             entry: dict[str, Any] = {"fast": fast, "reasoning": reasoning}
+            context = max_out = None
+            if profile_limits is not None:
+                try:
+                    context = profile_limits.get_model_context_length(model)
+                    max_out = profile_limits.get_max_tokens(model)
+                except Exception:
+                    context = max_out = None
+            if not context or not max_out:
+                # Every provider, not just plugin profiles: models.dev carries the
+                # window for vendor-hosted models. Registry-only read, no network.
+                try:
+                    from agent.models_dev import get_model_info
+
+                    info = get_model_info(slug, model, allow_network=False)
+                except Exception:
+                    info = None
+                if info is not None:
+                    context = context or getattr(info, "context_window", None)
+                    max_out = max_out or getattr(info, "max_output_tokens", None)
+            if context:
+                entry["context_window"] = int(context)
+            if max_out:
+                entry["max_output"] = int(max_out)
             if fast and model_supports_ultrafast(model) and ultrafast_offered(
                     model, provider=slug, base_url=row.get("api_url")):
                 entry["ultrafast"] = True
@@ -936,6 +968,52 @@ def _apply_pricing(rows: list[dict], *, force_fresh_nous_tier: bool = False, cac
             raw_pricing = get_pricing_for_provider(slug, **pricing_kwargs) or {}
         except Exception:
             raw_pricing = {}
+        # Per-model gap fill from the provider's own price sheet (plugin profiles
+        # such as HepAI). Runs for EVERY provider: models.dev may price some rows
+        # of a catalogue and miss others, so fill holes instead of only reacting to
+        # a completely empty map.
+        try:
+            from providers import get_provider_profile
+
+            profile = get_provider_profile(slug)
+            if profile is not None:
+                for model_id in models:
+                    if model_id in raw_pricing:
+                        continue
+                    info = profile.get_model_pricing(model_id)
+                    if not info:
+                        continue
+                    # The hook speaks USD per Mtok; the formatter below wants
+                    # per-token strings, same shape models.dev rows use.
+                    raw_pricing[model_id] = {
+                        "prompt": str((info.get("input") or 0) / 1_000_000),
+                        "completion": str((info.get("output") or 0) / 1_000_000),
+                        "input_cache_read": (
+                            str((info.get("cache_read") or 0) / 1_000_000)
+                            if info.get("cache_read") else ""
+                        ),
+                    }
+        except Exception:
+            pass
+        # Last-resort price fill from the models.dev registry snapshot (no network):
+        # providers whose price API is cold still get a list price in the picker.
+        try:
+            from agent.models_dev import get_model_info as _mdev_info
+
+            for model_id in models:
+                if model_id in raw_pricing:
+                    continue
+                meta = _mdev_info(slug, model_id, allow_network=False)
+                cost_in = getattr(meta, "cost_input", None)
+                cost_out = getattr(meta, "cost_output", None)
+                if cost_in is None and cost_out is None:
+                    continue
+                raw_pricing[model_id] = {
+                    "prompt": str(float(cost_in or 0) / 1_000_000),
+                    "completion": str(float(cost_out or 0) / 1_000_000),
+                }
+        except Exception:
+            pass
         cached_nous_tier: Optional[bool] = None
         plan_usage = _attach_nous_plan_usage(row, warm=not cached_only) if slug == "nous" else None
         if slug == "nous" and cached_only:

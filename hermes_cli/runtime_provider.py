@@ -1080,6 +1080,17 @@ def resolve_runtime_provider(*, requested: Optional[str] = None, explicit_api_ke
         logger.info("model.openai_runtime=codex_app_server overrides the %s runtime (source=%s); its credential/endpoint "
                     "is not used — the app-server authenticates with its own login", runtime.get("provider"), runtime.get("source"))
     runtime["api_mode"] = api_mode
+    # Per-model endpoint: gateways that split their API surfaces across paths.
+    if target_model:
+        try:
+            from providers import get_provider_profile
+
+            prof = get_provider_profile(runtime.get("provider") or requested_provider)
+            override = prof.base_url_for_model(target_model) if prof is not None else None
+            if override:
+                runtime["base_url"] = override
+        except Exception:
+            pass
     return runtime
 
 

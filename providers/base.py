@@ -393,6 +393,37 @@ class ProviderProfile:
         """Provider-qualified context bound; explicit user overrides take precedence."""
         return None
 
+    def base_url_for_model(self, model: str) -> str | None:
+        """Per-model endpoint override, or None for the profile's ``base_url``.
+
+        Companion to :meth:`api_mode_for_model` for gateways whose surfaces live
+        at different paths (HepAI: ``/apiv2`` for chat+responses,
+        ``/apiv2/anthropic`` for Messages).
+        """
+        return None
+
+    def api_mode_for_model(self, model: str) -> str | None:
+        """Per-model wire protocol for this provider, or None for the profile default.
+
+        Some gateways serve different models on different API surfaces (HepAI:
+        ``/responses`` for GPT, ``/anthropic/v1/messages`` for Claude, chat
+        completions for everything else). ``determine_api_mode`` consults this
+        before the profile-wide ``api_mode``; the returned value must be a
+        registered api_mode (``chat_completions``, ``anthropic_messages``,
+        ``codex_responses``, …).
+        """
+        return None
+
+    def get_model_pricing(self, model: str) -> dict[str, Any] | None:
+        """Per-model list price in USD per million tokens, or None.
+
+        Consumed by the picker payload (``inventory._apply_pricing``) when
+        models.dev has no entry for this provider — gateways that publish their
+        own catalogue (HepAI) price rows the price table would otherwise leave
+        blank. Keys: ``input``, ``output``, ``cache_read``, ``cache_write``.
+        """
+        return None
+
     def get_usage_cost(self, model: str, usage: Any) -> Any | None:
         """Optional CostResult from canonical usage; distinguish estimates from invoices."""
         return None

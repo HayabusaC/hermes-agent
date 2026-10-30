@@ -472,6 +472,18 @@ def determine_api_mode(provider: str, base_url: str = "", model: str = "") -> st
         return nous_api_mode(model)
     pdef = get_provider(provider)
     if pdef is not None:
+        # A plugin profile may split its catalogue across wires (per-model api_mode).
+        if model:
+            try:
+                from providers import get_provider_profile
+                from agent.transports import registered_api_modes
+
+                prof = get_provider_profile(provider)
+                override = prof.api_mode_for_model(model) if prof is not None else None
+                if override and override in registered_api_modes():
+                    return override
+            except Exception:
+                pass
         if pdef.transport in TRANSPORT_TO_API_MODE:
             return TRANSPORT_TO_API_MODE[pdef.transport]
         # A plugin profile's transport IS its api_mode when a plugin registered that dialect.

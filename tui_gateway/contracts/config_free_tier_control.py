@@ -475,6 +475,9 @@ class ModelCapabilities(Result):
     ultrafast: bool = False
     reasoning: bool
     can_disable_reasoning: bool | None = None
+    # Provider-declared limits (plugin profiles that publish their own catalogue).
+    context_window: int | None = None
+    max_output: int | None = None
 
 
 class ProviderLimit(Result):

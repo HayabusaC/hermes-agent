@@ -1124,13 +1124,16 @@ async function runBackendUpdate(): Promise<DesktopUpdateApplyResult> {
 }
 
 /**
- * Fork policy: a backend (gateway) runtime is upgraded on the machine that runs
- * it, never from this client. The gateway there is a patched mirror of upstream,
- * so an in-app update either fails or silently drops those patches — and the
- * failure is invisible from this side. The panel keeps REPORTING the backend's
- * status (version, channel, how far behind); only the apply entry is refused.
+ * Fork policy: the backend (gateway) may be updated from this client.
+ *
+ * It was disabled while the server checkout carried its changes as an
+ * uncommitted working tree — an in-app `hermes update` would have failed or
+ * dropped them. Those changes are now commits on the fork's main, the checkout
+ * tracks that branch and fast-forwards cleanly, and the dashboard restart is
+ * covered by a sudoers rule, so the button does the right thing. Flip this back
+ * to false if the server ever returns to a hand-patched tree.
  */
-export const BACKEND_UPDATE_APPLY_ENABLED = false
+export const BACKEND_UPDATE_APPLY_ENABLED = true
 
 /** Shown where the backend's install button would be. */
 export const BACKEND_UPDATE_DISABLED_NOTE =

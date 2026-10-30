@@ -13,7 +13,7 @@
 
 import electronUpdater from 'electron-updater'
 
-import type { UpdaterApplyResultWire, UpdaterStrategy, UpdaterStatusWire } from './index'
+import type { UpdaterApplyResultWire, UpdaterStatusWire, UpdaterStrategy } from './index'
 
 export interface WindowsNsisDeps {
   appVersion: string
@@ -51,6 +51,9 @@ export class WindowsNsisStrategy implements UpdaterStrategy {
     this.updater.autoInstallOnAppQuit = false
     this.updater.autoRunAppAfterInstall = true
     this.updater.allowDowngrade = false
+    // Every build of the same upstream release is a prerelease of it
+    // (0.22.5-17), so the updater must consider prerelease versions at all.
+    this.updater.allowPrerelease = true
     if (/^(stable|canary)$/.test(deps.channel)) {
       this.updater.channel = deps.channel
     }
@@ -139,25 +142,103 @@ export class WindowsNsisStrategy implements UpdaterStrategy {
   }
 }
 
-/** Numeric compare of dotted versions ("0.22.10" > "0.22.9"), prerelease and
- *  build suffixes ignored. Deliberately dependency-free: the semver typings in
- *  this tree expose neither `gt` nor `valid`, and one comparison does not
- *  justify fighting them. */
+/** Semver ordering, dependency-free.
+ *
+ *  Split out because the installer version is `<upstream>-<run>`: a prerelease
+ *  tail (`0.22.5-17` vs `0.22.5-9`) must order numerically — a plain numeric
+ *  compare of the core would call those two equal and the update would never
+ *  surface. Rules implemented: compare core numerically; a release outranks its
+ *  prereleases; prerelease identifiers compare numerically when both are
+ *  numbers, lexically otherwise; build metadata is ignored.
+ */
 export function isNewerVersion(latest: string, current: string): boolean {
-  const parts = (value: string): number[] =>
-    value
-      .replace(/^v/i, '')
-      .split(/[.+-]/)
-      .map(piece => Number.parseInt(piece, 10))
-      .filter((n): n is number => Number.isFinite(n))
+  return compareVersions(latest, current) > 0
+}
 
-  const a = parts(latest)
-  const b = parts(current)
-  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
-    const x = a[i] ?? 0
-    const y = b[i] ?? 0
-    if (x !== y) return x > y
+export function compareVersions(a: string, b: string): number {
+  const left = splitVersion(a)
+  const right = splitVersion(b)
+  const coreLength = Math.max(left.core.length, right.core.length)
+
+  for (let i = 0; i < coreLength; i += 1) {
+    const x = left.core[i] ?? 0
+    const y = right.core[i] ?? 0
+
+    if (x !== y) {
+      return x > y ? 1 : -1
+    }
   }
 
-  return latest !== current
+  // A release outranks any prerelease of the same core.
+  if (left.pre.length === 0 && right.pre.length === 0) {
+    return 0
+  }
+
+  if (left.pre.length === 0) {
+    return 1
+  }
+
+  if (right.pre.length === 0) {
+    return -1
+  }
+
+  const preLength = Math.max(left.pre.length, right.pre.length)
+
+  for (let i = 0; i < preLength; i += 1) {
+    const x = left.pre[i]
+    const y = right.pre[i]
+
+    if (x === undefined) {
+      return -1
+    }
+
+    if (y === undefined) {
+      return 1
+    }
+
+    if (x === y) {
+      continue
+    }
+
+    if (typeof x === 'number' && typeof y === 'number') {
+      return x > y ? 1 : -1
+    }
+
+    // Numeric identifiers sort before alphanumeric ones (semver §11).
+    if (typeof x === 'number') {
+      return -1
+    }
+
+    if (typeof y === 'number') {
+      return 1
+    }
+
+    return String(x) > String(y) ? 1 : -1
+  }
+
+  return 0
+}
+
+function splitVersion(value: string): { core: number[]; pre: (number | string)[] } {
+  const clean = value
+    .trim()
+    .replace(/^v/i, '')
+    .split('+')[0]
+  const dash = clean.indexOf('-')
+  const corePart = dash === -1 ? clean : clean.slice(0, dash)
+  const prePart = dash === -1 ? '' : clean.slice(dash + 1)
+  const core = corePart.split('.').map(piece => {
+    const parsed = Number.parseInt(piece, 10)
+
+    return Number.isFinite(parsed) ? parsed : 0
+  })
+  const pre = prePart
+    ? prePart.split('.').map(piece => {
+        const parsed = Number.parseInt(piece, 10)
+
+        return Number.isFinite(parsed) && String(parsed) === piece ? parsed : piece
+      })
+    : []
+
+  return { core, pre }
 }

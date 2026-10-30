@@ -80,13 +80,16 @@ jobs:
         run: |
           $ver = "${{ github.event.inputs.version }}"
           if (-not $ver) {
-            # Never derive this from `git describe`: the fork carries upstream's
-            # canary tags (v0.22.5+canary.<timestamp>), and a build-metadata
-            # version compares EQUAL to its base in semver — electron-updater
-            # then refuses to see any newer build. A dated, run-numbered version
-            # is monotonic and parseable by both electron-updater and the
-            # client's own comparator.
-            $ver = "0.$((Get-Date).ToString('yyyyMMdd')).$env:GITHUB_RUN_NUMBER"
+            # Track upstream's own release line (v0.22.5 → 0.22.5) and append the
+            # run number as a semver PRERELEASE: 0.22.5-17, 0.22.5-18, …
+            # Why not build metadata (`+`)? It compares EQUAL to its base in
+            # semver, so the updater never fired. Why not the dated scheme? It
+            # untethered the installer from the Hermes version it was built from.
+            # Prerelease ordering gives both: monotonic within a release line, and
+            # a newer upstream line (0.23.0) still outranks 0.22.5-99.
+            $base = git describe --tags --abbrev=0 --exclude '*canary*' --match 'v0.*' 2>$null
+            if ($base) { $base = $base -replace '^v', '' } else { $base = '0.0.0' }
+            $ver = "$base-$env:GITHUB_RUN_NUMBER"
           }
           "installer version: $ver  (package.json shipped $(node -p "require('./package.json').version"))"
           npm pkg set version=$ver

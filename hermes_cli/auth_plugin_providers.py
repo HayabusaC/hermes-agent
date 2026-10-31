@@ -163,6 +163,24 @@ def _api_key_env_fields(pp: Any) -> tuple[tuple, str]:
             next((v for v in pp.env_vars if is_url(v)), None) or "")
 
 
+def profile_owns_runtime_credential(pp: Any) -> bool:
+    """True when *pp* MINTS its own runtime credential instead of reading one env var.
+
+    A plugin whose token rotates (an OAuth / subscription login) returns it from
+    ``ProviderProfile.resolve_api_key_secret``; no env var can hold that token, and inventing one
+    just to satisfy the registry plants a dead "paste key" card in Settings → Providers.
+    Such a profile may therefore carry an ``api_key`` registry row with NO env vars: the row
+    exists so the api-key rung — the only rung that consults that hook — runs, and the credential
+    itself comes from the hook (#113703: with no row at all the ladder walks to its OpenRouter
+    fallback and spends an unrelated cloud key).
+    """
+    try:
+        from providers.base import ProviderProfile
+    except Exception:
+        return False
+    return type(pp).resolve_api_key_secret is not ProviderProfile.resolve_api_key_secret
+
+
 def register_plugin_provider(pp: Any) -> None:
     """Mirror one profile into ``PROVIDER_REGISTRY`` under the ``auth_type`` it declares.
 
@@ -180,14 +198,17 @@ def register_plugin_provider(pp: Any) -> None:
 
 
 def _profile_row(pp: Any) -> Optional[Any]:
-    """The registry row *pp* declares, or None (a skipped name, an api-key profile without env vars)."""
+    """The registry row *pp* declares, or None (a skipped name, an api-key profile with neither
+    env vars nor a credential hook of its own)."""
     from hermes_cli.auth import ProviderConfig, _api_key_provider
 
     if pp.name in _REGISTRY_PLUGIN_SKIP:
         return None
     auth_type = registry_auth_type(pp)
     if auth_type == "api_key":
-        if not pp.env_vars:
+        # No env vars is legitimate for a profile that mints its credential itself: the row's
+        # only job is to put the provider on the api-key rung, where that hook is consulted.
+        if not pp.env_vars and not profile_owns_runtime_credential(pp):
             return None
         key_vars, url_var = _api_key_env_fields(pp)
         return _api_key_provider(pp.name, pp.display_name or pp.name, pp.base_url, key_vars,

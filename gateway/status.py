@@ -1093,7 +1093,7 @@ def _prepare_runtime_status_update(
     parked_profiles: Any = _UNSET, multiplex_standalone_reason: Any = _UNSET,
     platform_metrics: Any = _UNSET,
     ingress_url: Any = _UNSET, listener_base: Any = _UNSET, clear_profile_platforms: bool = False,
-    drop_profile_platforms: Optional[str] = None,
+    drop_profile_platforms: Optional[str] = None, keep_platforms: Any = _UNSET,
     load_existing: bool = True, reload_existing: bool = False,
 ) -> tuple[Path, dict[str, Any], dict[str, Any]]:
     """Merge one update into the process-wide canonical status snapshot."""
@@ -1118,6 +1118,17 @@ def _prepare_runtime_status_update(
                 k: v for k, v in payload["platforms"].items()
                 if not isinstance(k, str) or ":" not in k
                 or (drop_prefix is not None and not k.startswith(drop_prefix))
+            }
+        if keep_platforms is not _UNSET and keep_platforms is not None:
+            # The merge keeps whatever the file already held, so a platform that was fatally rejected
+            # (or merely connected) in an earlier run kept rendering as TODAY's platform state —
+            # `hermes gateway status` reported a revoked token forever after the platform was
+            # disabled. Startup passes the platforms it actually owns; anything else that is not
+            # profile-scoped ("<profile>:<platform>", written by a multiplexed child) is dropped.
+            keep = {str(p) for p in keep_platforms}
+            payload["platforms"] = {
+                k: v for k, v in payload["platforms"].items()
+                if (isinstance(k, str) and ":" in k) or str(k) in keep
             }
         payload.update({key: current_record[key] for key in ("kind", "pid", "argv", "start_time")})
         payload["updated_at"] = _utc_now_iso()

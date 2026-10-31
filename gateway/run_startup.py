@@ -1282,6 +1282,14 @@ class GatewayStartupMixin:
             # secondary (authorization and prompt rendering run before the agent-turn scope).
             self._wire_adapter_handlers(adapter)
             _pending_connects.append((platform, platform_config, adapter))
+        # Drop platform entries a PREVIOUS run left in gateway_state.json for platforms this process
+        # does not own. The status merge preserves what the file already held, so a platform disabled
+        # later (or one whose token was revoked long ago) kept rendering as the CURRENT state — a
+        # clean, running gateway reported "⚠ telegram: token rejected" from a run weeks earlier.
+        with _log_suppressed(logging.DEBUG, "Runtime status platform prune failed: %s"):
+            from gateway.run import _write_runtime_status_quiet
+            _write_runtime_status_quiet(
+                keep_platforms=[p.value for p, c in self.config.platforms.items() if c.enabled])
         return False, enabled_platform_count, _multiplex_skipped_platforms, _pending_connects
 
     async def _start_connect_pending(self, _pending_connects: list) -> Optional[list]:

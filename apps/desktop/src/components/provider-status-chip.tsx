@@ -133,14 +133,19 @@ function useChipState(provider: ModelOptionProvider): ChipState | null {
   const windows = usageWindows(provider)
   const tightest = windows?.[0]
 
-  if (!windows || !tightest || tightest.remaining > USAGE_NOTICE_PERCENT) {
+  if (!windows || !tightest) {
     return null
   }
 
   const reset = (ms: null | number) => (ms === null ? null : formatReset(ms))
 
+  // Always show the tightest window (a subscription's remaining quota is information, not only a
+  // warning). The "about to hit the limit" header stays conditional: a plan with 96% left must not
+  // claim it is running out, so the tooltip lists the windows on their own until it is near.
+  const nearLimit = tightest.remaining <= USAGE_NOTICE_PERCENT
+
   const lines = [
-    copy.usageTip(provider.name),
+    ...(nearLimit ? [copy.usageTip(provider.name)] : []),
     ...windows.map(w => copy.usageWindow(w.label, w.remaining, reset(w.resetMs)))
   ]
 

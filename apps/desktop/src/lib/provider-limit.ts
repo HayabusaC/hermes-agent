@@ -43,7 +43,9 @@ export function modelResetMs(provider: ModelOptionProvider, model: string, nowMs
   return limit?.scope === 'models' ? parseMs(limit.models?.[model]) : null
 }
 
-/** Remaining share at or under which a picker shows the usage chip, and turns it amber. */
+/** Remaining share at or under which the chip's tooltip adds the "close to its limit" header
+ *  (and ``USAGE_WARN_PERCENT`` turns it amber). Visibility itself is unconditional: a plan's
+ *  remaining quota is shown whether or not it is nearly spent. */
 export const USAGE_NOTICE_PERCENT = 20
 export const USAGE_WARN_PERCENT = 10
 

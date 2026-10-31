@@ -76,3 +76,46 @@ it('only presents a pool-wide wall when every account is limited, preserving unk
   expect(screen.getByText('10 accounts')).toBeTruthy()
   expect(screen.queryByText(/Limited until|accounts limited/)).toBeNull()
 })
+
+it('always shows a subscription window, without claiming a comfortable plan is running out', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue(NOW)
+  const row: ModelOptionProvider = {
+    slug: 'antigravity',
+    name: 'Google Antigravity',
+    models: ['gemini-3.8-flash-high'],
+    usage: {
+      windows: [
+        { label: 'Gemini Models · weekly', used_percent: 4, resets_at: iso(1440) },
+        { label: 'Claude and GPT models · weekly', used_percent: 0, resets_at: iso(2000) }
+      ]
+    }
+  }
+
+  render(view(row))
+  const chip = screen.getByText(/96% left/)
+  fireEvent.pointerMove(chip, { pointerType: 'mouse' })
+  const tip = await screen.findByRole('tooltip')
+
+  expect(tip.textContent).toContain('Gemini Models · weekly: 96% left')
+  expect(tip.textContent).toContain('Claude and GPT models · weekly: 100% left')
+  // 96% remaining is information, not a warning.
+  expect(tip.textContent).not.toContain('close to its usage limit')
+})
+
+it('adds the near-limit header once the tightest window is low', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue(NOW)
+  const row: ModelOptionProvider = {
+    slug: 'openai-codex',
+    name: 'OpenAI Codex',
+    models: ['gpt-5.4'],
+    usage: { windows: [{ label: 'Weekly', used_percent: 88, resets_at: iso(600) }] }
+  }
+
+  render(view(row))
+  const chip = screen.getByText(/12% left/)
+  fireEvent.pointerMove(chip, { pointerType: 'mouse' })
+  const tip = await screen.findByRole('tooltip')
+
+  expect(tip.textContent).toContain('OpenAI Codex is close to its usage limit.')
+  expect(tip.textContent).toContain('Weekly: 12% left')
+})

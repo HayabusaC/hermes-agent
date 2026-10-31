@@ -174,6 +174,11 @@ def fetch_custom_provider_usage(provider: str, *, base_url: str = "", api_key: s
     if plan:
         details.append(f"Plan {plan}")
     if not details:
+        # Billing-style endpoint: cumulative spend only (no wallet balance to show).
+        cents = _as_float(payload.get("total_usage"))
+        if cents is not None:
+            details.append(f"Spend ${cents / 100.0:.4f} USD")
+    if not details:
         return None
 
     # The model the wallet is mostly spent on is the useful second line; keep the list short.
@@ -221,9 +226,18 @@ def fetch_custom_provider_spend(provider: str, *, api_key: str = "") -> Optional
     actual = _as_float(total.get("actual_cost", total.get("cost")))
     if actual is None:
         actual = _as_float(payload.get("total_actual_cost"))
+    cents = None
     if actual is None:
-        return None
+        # OpenAI-compatible billing endpoint (new-api / one-api style): ``total_usage`` is the
+        # cumulative spend in 0.01 USD. 4router reports this and nothing else.
+        cents = _as_float(payload.get("total_usage"))
+        if cents is None:
+            return None
     symbol, amounts_are_cny, rate = custom_provider_currency(provider)
+    if cents is not None:
+        # Cents are already USD-denominated; a `currency: CNY` reseller flag does not apply here.
+        return {"actual": cents / 100.0, "list": cents / 100.0, "symbol": "$", "unit": "USD",
+                "usd_per_cny": 1.0}
     return {
         "actual": actual,
         "list": _as_float(total.get("cost")) or actual,

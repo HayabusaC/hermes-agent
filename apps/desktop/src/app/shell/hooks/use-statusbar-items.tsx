@@ -11,6 +11,7 @@ import { useApprovalModeStatusbarItem } from '@/app/shell/approval-mode-menu'
 import { ContextMeterDetail, ContextUsagePanel } from '@/app/shell/context-usage-panel'
 import { GatewayMenuPanel } from '@/app/shell/gateway-menu-panel'
 import { UsageCostIcon, UsageCostPanel, useTodayUsageLabel } from '@/app/shell/usage-cost-panel'
+import { RcrunStatusChip } from '@/app/shell/rcrun-drawer'
 import { COST_LABELS } from '@/lib/cost-display'
 import { useChangeWorkspaceItem } from '@/app/shell/hooks/use-change-workspace'
 import { useContextBreakdown } from '@/app/shell/hooks/use-context-breakdown'
@@ -766,6 +767,13 @@ export function useStatusbarItems({
         // Listed in the bar's show/hide menu only for window plans; everyone else never sees the entry.
         toggleLabel: planGauge ? copy.togglePlanUsage : undefined,
         variant: 'link'
+      },
+      {
+        // Remote compute jobs (rcrun). The chip owns its own polling + drawer
+        // trigger, so this entry only claims the slot and the show/hide name.
+        id: 'rcrun-jobs',
+        render: () => <RcrunStatusChip />,
+        toggleLabel: 'Remote jobs'
       },
       systemResourcesItem,
       {

@@ -108,6 +108,7 @@ import { useHermesConfigRecord } from '../hooks/use-config-record'
 import { useKeybinds } from '../hooks/use-keybinds'
 import { useHudHandoff } from '../hud/handoff'
 import { ModelPickerOverlay } from '../model-picker-overlay'
+import { RcrunDrawer } from '../shell/rcrun-drawer'
 import { ModelVisibilityOverlay } from '../model-visibility-overlay'
 import { mainChatOccupied, openSession, openSessionFromPicker } from '../open-session'
 import { PetGenerateOverlay } from '../pet-generate/pet-generate-overlay'
@@ -1301,6 +1302,9 @@ export function ContribWiring({ children }: { children: ReactNode }) {
         profile={activeGatewayProfile}
         requestGateway={requestGateway}
       />
+      {/* Remote-job drawer: overlays whatever route is on screen; the statusbar
+          chip toggles it. Mounted here so it survives navigation. */}
+      {!isAuxiliaryWindow() && <RcrunDrawer />}
       <SessionPickerOverlay onResume={sessionId => openSessionFromPicker(sessionId, navigate)} />
       <ModelVisibilityOverlay
         gateway={gateway || undefined}

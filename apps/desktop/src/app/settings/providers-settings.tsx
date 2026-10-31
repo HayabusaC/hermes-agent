@@ -29,6 +29,7 @@ import { $desktopOnboarding, startManualLocalEndpoint, startManualProviderOAuth 
 import { $settingsRequestProfile } from '@/store/settings-scope'
 import type { EnvVarInfo, OAuthProvider } from '@/types/hermes'
 
+import { AntigravityProviderRow } from './antigravity-provider-row'
 import { isKeyVar, ProviderKeyRows } from './credential-key-ui'
 import { CustomEndpointsSettings } from './custom-endpoints-settings'
 import { SettingsCategoryHeading, useEnvCredentials } from './env-credentials'
@@ -211,6 +212,9 @@ function OAuthPicker({
         {p.intro}
       </p>
       {featured && <FeaturedProviderRow onSelect={select} provider={featured} />}
+      {/* Fork-local plugin provider (Google Antigravity): own sign-in surface, rendered only
+          when the gateway actually has the antigravity-login plugin. */}
+      <AntigravityProviderRow profile={profile} />
       {/* Slot #2 — the no-account path, matching onboarding. Behind the
           --local launch flag like every local-models surface. */}
       {$localModelsEnabled.get() && <LocalModelsProviderRow onClick={onWantLocalModels} />}

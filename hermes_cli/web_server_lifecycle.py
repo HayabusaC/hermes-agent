@@ -167,6 +167,26 @@ def _warm_gateway_module() -> None:
         _log.debug("warm-up provider discovery failed", exc_info=True)
 
 
+def _warm_account_usage() -> None:
+    """Start the picker's quota refresh at startup.
+
+    ``model.options`` answers usage from an in-process cache and refreshes it in the background, so
+    the FIRST open after a (re)start reported no quota for every provider — Codex included — until a
+    second open a few seconds later. Kicking the refresh off here means the first open already has
+    data.
+    """
+    try:
+        from agent.account_usage_cache import has_account_usage, refresh_account_usage_async
+        from hermes_cli.provider_catalog import provider_catalog
+
+        slugs = [d.slug for d in provider_catalog() if has_account_usage(d.slug)]
+        if slugs:
+            refresh_account_usage_async(slugs)
+            _log.debug("warm-up account usage: refreshing %s", ", ".join(slugs))
+    except Exception:  # health: allow BLE001 -- best-effort warm-up; the picker still refreshes on read
+        _log.debug("warm-up account usage failed", exc_info=True)
+
+
 def _resolve_restart_drain_timeout() -> float:
     try:
         from hermes_cli.gateway import _get_restart_drain_timeout

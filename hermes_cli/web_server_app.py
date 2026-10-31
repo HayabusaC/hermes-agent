@@ -28,7 +28,7 @@ def _unlink_pty_markers(app: FastAPI) -> None:
 @asynccontextmanager
 async def standalone_lifespan(app: "FastAPI"):
     from hermes_cli.web_server import (
-        _eager_reconcile_own_session_db, _warm_gateway_module,
+        _eager_reconcile_own_session_db, _warm_account_usage, _warm_gateway_module,
         _start_desktop_cron_ticker, _dashboard_selftest_loop,
         _auto_archive_ticker_loop, _terminate_desktop_managed_gateway,
     )
@@ -62,6 +62,8 @@ async def standalone_lifespan(app: "FastAPI"):
     # import holds the GIL, so run_in_executor still froze the loop 15-22s and
     # the Desktop's 10s ready-probe timed out (GH-73083).
     _warm_gateway_module()
+    # Off-loop: the catalog walk reads config for every provider.
+    threading.Thread(target=_warm_account_usage, name="warm-account-usage", daemon=True).start()
 
     # Snapshot the checkout revision so lazy-import paths (model picker) can
     # refuse with "restart required" after `hermes update` replaced the code

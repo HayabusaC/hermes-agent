@@ -122,7 +122,10 @@ _KNOWN_PROVIDER_KEYS = {
     "catalog_provider", "session_affinity_header",
     # Optional usage endpoint for a reseller that reports a wallet balance / spend
     # (`agent/custom_usage.py`): "/v1/usage" or an absolute URL.
-    "usage_url"}
+    "usage_url",
+    # Currency the usage endpoint's figures are really in (a reseller labeling CNY as USD), and
+    # the rate to convert them for the USD-denominated cost ledger.
+    "currency", "usd_per_cny"}
 
 
 def _pick_provider_base_url(entry: dict[str, Any], provider_key: str) -> str:

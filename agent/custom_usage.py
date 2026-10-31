@@ -57,6 +57,34 @@ def custom_usage_url(provider: str) -> Optional[str]:
     return urlunsplit((parts.scheme, parts.netloc, joined, "", ""))
 
 
+def custom_provider_currency(provider: str) -> tuple[str, float, float]:
+    """``(currency_symbol, amounts_are_cny, usd_per_cny)`` for a ``providers:`` entry.
+
+    Resellers commonly label CNY amounts as "USD" at 1:1 (52ai does: the figures the endpoint
+    reports are what the user pays in yuan). ``currency: CNY`` states that, and ``usd_per_cny``
+    converts for the USD-denominated ledger (default 1/7.1 ≈ 0.1408).
+    """
+    slug = str(provider or "").strip().lower()
+    entry: dict[str, Any] = {}
+    try:
+        from hermes_cli.config import load_config
+
+        entry = ((load_config() or {}).get("providers") or {}).get(slug) or {}
+    except Exception:
+        entry = {}
+    if not isinstance(entry, dict):
+        entry = {}
+    currency = str(entry.get("currency") or "").strip().upper()
+    try:
+        rate = float(entry.get("usd_per_cny") or 0.0)
+    except (TypeError, ValueError):
+        rate = 0.0
+    if rate <= 0:
+        rate = 0.1408
+    symbol = "¥" if currency == "CNY" else "$"
+    return symbol, currency == "CNY", rate
+
+
 def custom_provider_credentials(provider: str) -> tuple[str, str]:
     """``(api_key, base_url)`` for a ``providers:`` entry, from its inline key or key_env."""
     slug = str(provider or "").strip().lower()
@@ -118,6 +146,9 @@ def fetch_custom_provider_usage(provider: str, *, base_url: str = "", api_key: s
         return None
 
     unit = str(payload.get("unit") or "USD").strip() or "USD"
+    symbol, amounts_are_cny, usd_per_cny = custom_provider_currency(provider)
+    if amounts_are_cny:
+        unit = "CNY"
     today = ((payload.get("usage") or {}).get("today") or {}) if isinstance(payload.get("usage"), dict) else {}
     total = ((payload.get("usage") or {}).get("total") or {}) if isinstance(payload.get("usage"), dict) else {}
 
@@ -125,20 +156,20 @@ def fetch_custom_provider_usage(provider: str, *, base_url: str = "", api_key: s
     balance = _as_float(payload.get("balance", payload.get("remaining")))
     if balance is not None:
         # details[0] is also the chip's label, so keep it short.
-        details.append(f"Wallet {balance:.4f} {unit}")
+        details.append(f"Wallet {symbol}{balance:.4f} {unit}")
     today_spend = _as_float(today.get("actual_cost", today.get("cost")))
     if today_spend is not None:
         list_cost = _as_float(today.get("cost"))
         requests = today.get("requests")
-        line = f"Today {today_spend:.4f} {unit}"
+        line = f"Today {symbol}{today_spend:.4f} {unit}"
         if list_cost is not None and abs(list_cost - today_spend) > 1e-9:
-            line += f" (list {list_cost:.4f})"
+            line += f" (list {symbol}{list_cost:.4f})"
         if isinstance(requests, int):
             line += f" · {requests} req"
         details.append(line)
     total_spend = _as_float(total.get("actual_cost", total.get("cost")))
     if total_spend is not None:
-        details.append(f"All time {total_spend:.4f} {unit}")
+        details.append(f"All time {symbol}{total_spend:.4f} {unit}" + (f" (≈${total_spend * usd_per_cny:.2f})" if amounts_are_cny else ""))
     plan = str(payload.get("planName") or "").strip()
     if plan:
         details.append(f"Plan {plan}")
@@ -152,7 +183,7 @@ def fetch_custom_provider_usage(provider: str, *, base_url: str = "", api_key: s
         if isinstance(top, dict) and top.get("model"):
             spend = _as_float(top.get("actual_cost", top.get("cost")))
             if spend is not None:
-                details.append(f"Top model {top['model']}: {spend:.4f} {unit}")
+                details.append(f"Top model {top['model']}: {symbol}{spend:.4f} {unit}")
 
     return AccountUsageSnapshot(
         provider=str(provider or "").strip().lower(),

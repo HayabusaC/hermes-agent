@@ -2182,6 +2182,14 @@ def init_agent(
         if isinstance(requested_provider, str) and requested_provider.strip()
         else agent.provider
     )
+    # Cost/usage attribution: a user-defined `providers:` entry resolves to the generic "custom"
+    # route, so every billing row used to say "custom" and the panels could not tell 52ai from any
+    # other custom endpoint. `requested_provider` is exactly the configured id — record that.
+    agent.billing_provider = (
+        agent.requested_provider
+        if agent.provider == "custom" and agent.requested_provider
+        else agent.provider
+    )
     agent.capabilities = {
         key: value for key, value in (capabilities or {}).items()
         if isinstance(key, str) and isinstance(value, bool)

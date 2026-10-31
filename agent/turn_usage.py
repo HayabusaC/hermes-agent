@@ -272,7 +272,7 @@ def record_response_usage(
                 estimated_cost_usd=_cost_delta,
                 cost_status=cost_result.status,
                 cost_source=cost_result.source,
-                billing_provider=agent.provider,
+                billing_provider=getattr(agent, "billing_provider", "") or agent.provider,
                 billing_base_url=agent.base_url,
                 billing_mode="subscription_included"
                 if cost_result.status == "included" else None,

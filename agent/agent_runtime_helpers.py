@@ -2265,6 +2265,12 @@ def _swap_switch_runtime(agent, new_model, new_provider, api_key, base_url, api_
     agent._config_context_length = None
     agent.model = new_model
     agent.provider = agent.requested_provider = new_provider
+    # Keep the billing identity in step with the new route (see agent_init).
+    agent.billing_provider = (
+        agent.requested_provider
+        if agent.provider == "custom" and agent.requested_provider
+        else agent.provider
+    )
     # Re-read reasoning_echo so the flag reflects the new primary model (see _reasoning_echo_opt_in).
     agent._reasoning_echo_flag = agent._read_reasoning_echo_from_config()
     # Empty base_url while the provider changes means upstream resolution failed; falling back to
@@ -2413,7 +2419,8 @@ def _persist_switch_billing_route(agent) -> None:
         return
     try:
         session_db.update_session_billing_route(
-            session_id, provider=agent.provider, base_url=agent.base_url,
+            session_id, provider=getattr(agent, "billing_provider", "") or agent.provider,
+            base_url=agent.base_url,
             billing_mode=getattr(agent, "api_mode", None),
         )
     except Exception:

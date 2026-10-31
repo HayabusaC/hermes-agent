@@ -878,8 +878,15 @@ def _extract_pricing(payload: dict[str, Any]) -> dict[str, Any]:
         pricing: dict[str, Any] = {}
         for target, aliases in alias_map.items():
             for alias in aliases:
-                if alias in normalized and normalized[alias] not in {None, ""}:
-                    pricing[target] = normalized[alias]
+                value = normalized.get(alias)
+                # A multimodal entry carries ``modalities: {input: [...], output: [...]}`` — those
+                # keys collide with the "input"/"output" price aliases and the value is a list, which
+                # used to raise TypeError on the set-membership test below and abort the whole
+                # /models parse (endpoint context length then fell back to a hardcoded guess).
+                if isinstance(value, (dict, list, tuple, set)):
+                    continue
+                if value is not None and value != "":
+                    pricing[target] = value
                     break
         if pricing:
             return _normalize_token_rates(pricing, normalized.get("unit"))

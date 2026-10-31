@@ -825,11 +825,30 @@ def _filter_explicit_provider_rows(rows: list[dict], ctx: ConfigContext) -> list
             # deliberate sign-ins that leave no trace in config/env; keep the rows discovery accepted.
             (slug == "anthropic" and _anthropic_oauth_credentials_present())
             or _external_process_signed_in(slug)
+            or _plugin_signed_in(slug)
             or is_provider_explicitly_configured(slug)
         )
 
     return [row for row in rows
             if (slug := str(row.get("slug", "")).strip().lower()) and _is_explicit(row, slug)]
+
+
+def _plugin_signed_in(slug: str) -> bool:
+    """True when a plugin provider holds its own deliberately-obtained credential.
+
+    Same shape as Anthropic OAuth / external-process CLIs: the sign-in leaves no trace in config
+    or env, so the explicit filter cannot see it — but the profile can say so (`credentials_configured`).
+    A profile flagged `ambient_credentials` stays hidden: that flag means "another tool's login".
+    """
+    try:
+        from providers import get_provider_profile
+
+        prof = get_provider_profile(slug)
+        if prof is None or getattr(prof, "ambient_credentials", False):
+            return False
+        return prof.credentials_configured() is True
+    except Exception:
+        return False
 
 
 def _external_process_signed_in(slug: str) -> bool:

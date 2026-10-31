@@ -949,6 +949,20 @@ def _lap_overlay_rows(b: _PickerBuild, data: dict, user_providers: dict) -> None
         b.seen_slugs.add(pid.lower())
 
 
+def _plugin_credentials_configured(slug: str) -> bool:
+    """True when *slug*'s profile reports an already-held credential (offline check only)."""
+    try:
+        from providers import get_provider_profile
+
+        prof = get_provider_profile(slug)
+        if prof is None:
+            return False
+        return prof.credentials_configured() is True
+    except Exception as exc:  # a plugin hook must never fail the picker payload
+        logger.debug("credentials_configured check failed for %s: %s", slug, exc)
+        return False
+
+
 def _lap_canonical_rows(b: _PickerBuild) -> None:
     """Section 2b: CANONICAL_PROVIDERS missed by sections 1/2."""
     from hermes_cli.auth import PROVIDER_REGISTRY
@@ -970,6 +984,10 @@ def _lap_canonical_rows(b: _PickerBuild) -> None:
                 continue
         has_creds = has_creds or _auth_store_has_provider(cp.slug) or _pool_usable(cp.slug, for_picker=b.for_picker) or (
             _is_aws_sdk(cp_config) and _has_aws_sdk_creds_for_listing(cp.slug, b.current_provider))
+        if not has_creds and _plugin_credentials_configured(cp.slug):
+            # A plugin provider that mints its own credential declares no env var and seeds no
+            # pool entry, so the gates above cannot see it; ask the profile itself.
+            has_creds = True
         if not has_creds and cp_config is not None and cp_config.auth_type == "external_process":
             # Subprocess-backed providers own their auth; the binary resolving is the credential
             # evidence for listing (same gate as the section-2 overlay rows and hermes auth status).

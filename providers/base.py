@@ -658,6 +658,16 @@ class ProviderProfile:
         """Provider-owned ``(runtime_api_key, source)`` resolution; None = generic env/pool ladder."""
         return None
 
+    def credentials_configured(self) -> bool | None:
+        """``True`` when this provider already holds a credential; ``None`` = cannot tell.
+
+        Must be CHEAP and offline (a file/state read, no token refresh, no network): the model
+        pickers call it for every catalog row. It exists for plugin providers that mint their own
+        credential instead of reading an env var — without it the pickers' env-var/credential-pool
+        gate hides a fully signed-in provider from /model and the desktop picker.
+        """
+        return None
+
     def runtime_base_url(self, *, api_key: str, default: str, env_url: str) -> str | None:
         """Runtime base URL derived from the credential (e.g. an account endpoint); None = env or default."""
         return None

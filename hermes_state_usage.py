@@ -336,7 +336,9 @@ class SessionUsageMixin:
         # model/provider *active at the time of that call*. Recording the per-call delta into
         # session_model_usage keyed by the live model preserves an accurate per-model breakdown regardless
         # of how many times the user switches. See #51607.
-        record_model_usage = (not absolute) and has_usage
+        # A cost-only delta (a vendor-reported actual charge, no fresh tokens) still belongs on the
+        # per-model row; `has_usage` alone would drop it into the session totals only.
+        record_model_usage = (not absolute) and bool(has_usage or actual_cost_usd)
 
         row = conn.execute(
             "SELECT model, billing_provider, api_call_count FROM sessions WHERE id = ?", (session_id,),

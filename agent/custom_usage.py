@@ -193,3 +193,41 @@ def fetch_custom_provider_usage(provider: str, *, base_url: str = "", api_key: s
         windows=(),
         details=tuple(details),
     )
+
+def fetch_custom_provider_spend(provider: str, *, api_key: str = "") -> Optional[dict[str, Any]]:
+    """``{"actual": float, "list": float, "symbol": str, "unit": str, "usd_per_cny": float}``.
+
+    The vendor's own cumulative spend for the account, for delta accounting: the ledger can then
+    carry the money actually charged instead of a price-table guess. ``None`` when the provider
+    declares no usage endpoint or the read fails.
+    """
+    import httpx
+
+    url = custom_usage_url(provider)
+    if not url:
+        return None
+    key = api_key or custom_provider_credentials(provider)[0]
+    try:
+        resp = httpx.get(url, headers={"Authorization": f"Bearer {key}"} if key else {}, timeout=10.0)
+        if resp.status_code != 200:
+            return None
+        payload = resp.json()
+    except (httpx.HTTPError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    total = usage.get("total") if isinstance(usage.get("total"), dict) else {}
+    actual = _as_float(total.get("actual_cost", total.get("cost")))
+    if actual is None:
+        actual = _as_float(payload.get("total_actual_cost"))
+    if actual is None:
+        return None
+    symbol, amounts_are_cny, rate = custom_provider_currency(provider)
+    return {
+        "actual": actual,
+        "list": _as_float(total.get("cost")) or actual,
+        "symbol": symbol,
+        "unit": "CNY" if amounts_are_cny else (str(payload.get("unit") or "USD").strip() or "USD"),
+        "usd_per_cny": rate if amounts_are_cny else 1.0,
+    }

@@ -286,6 +286,16 @@ def record_response_usage(
                 agent.session_id, total_tokens, e,
             )
 
+    # A provider that reports its own spend (a `providers:` entry with `usage_url`) books the money
+    # it actually charged — the estimated ledger cannot price those model ids. Background read, so
+    # the turn never waits on the vendor's endpoint.
+    try:
+        from agent.custom_usage_accounting import record_actual_cost
+
+        record_actual_cost(agent, model=agent.model)
+    except Exception:  # accounting is best-effort, never a turn failure
+        logger.debug("custom actual-cost hook failed", exc_info=True)
+
     if agent.verbose_logging:
         logging.debug(f"Token usage: prompt={usage_dict['prompt_tokens']:,}, completion={usage_dict['completion_tokens']:,}, total={usage_dict['total_tokens']:,}")
 

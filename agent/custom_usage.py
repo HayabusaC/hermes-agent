@@ -177,7 +177,8 @@ def fetch_custom_provider_usage(provider: str, *, base_url: str = "", api_key: s
         # Billing-style endpoint: cumulative spend only (no wallet balance to show).
         cents = _as_float(payload.get("total_usage"))
         if cents is not None:
-            details.append(f"Spend ${cents / 100.0:.4f} USD")
+            sym, is_cny, _rate = custom_provider_currency(provider)
+            details.append(f"Spend {sym}{cents / 100.0:.4f} {'CNY' if is_cny else 'USD'}")
     if not details:
         return None
 
@@ -235,9 +236,13 @@ def fetch_custom_provider_spend(provider: str, *, api_key: str = "") -> Optional
             return None
     symbol, amounts_are_cny, rate = custom_provider_currency(provider)
     if cents is not None:
-        # Cents are already USD-denominated; a `currency: CNY` reseller flag does not apply here.
-        return {"actual": cents / 100.0, "list": cents / 100.0, "symbol": "$", "unit": "USD",
-                "usd_per_cny": 1.0}
+        # The billing field counts 0.01 of the PROVIDER'S currency. 4router bills in CNY: a call the
+        # vendor recorded as 0.1134 was paid as ¥0.001134, so `currency: CNY` applies here too — only
+        # the cell size (1/100) is fixed by the shape.
+        native = cents / 100.0
+        return {"actual": native, "list": native, "symbol": symbol,
+                "unit": "CNY" if amounts_are_cny else "USD",
+                "usd_per_cny": rate if amounts_are_cny else 1.0}
     return {
         "actual": actual,
         "list": _as_float(total.get("cost")) or actual,

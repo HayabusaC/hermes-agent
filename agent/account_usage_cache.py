@@ -61,7 +61,12 @@ def has_account_usage(provider: str) -> bool:
     if slug in _USAGE_FETCHERS:
         return True
     profile = get_provider_profile(slug) if slug else None
-    return profile is not None and type(profile).fetch_account_usage is not ProviderProfile.fetch_account_usage
+    if profile is not None and type(profile).fetch_account_usage is not ProviderProfile.fetch_account_usage:
+        return True
+    # A user-defined provider with its own usage endpoint reports wallet details, not windows.
+    from agent.custom_usage import custom_usage_url
+
+    return custom_usage_url(slug) is not None
 
 
 def _identity_id_for(provider: str, entry: Any) -> str:
@@ -102,11 +107,12 @@ def remember_account_usage(
     the single-account gauge — and additionally in the account's identity slot when the fetcher
     identified it, so a pooled picker sees per-turn data without waiting on its own refresh.
 
-    A snapshot without windows is never stored: a failed or empty fetch must not erase a fresher
-    snapshot. A fetch that STARTED before the freshest stored one cannot replace it either
-    (``started_monotonic``), however late its response arrives.
+    An EMPTY snapshot is never stored: a failed or empty fetch must not erase a fresher snapshot.
+    Text-only snapshots (a wallet balance and spend, no percentage windows) are content, not
+    emptiness, so they are stored like any other. A fetch that STARTED before the freshest stored
+    one cannot replace it either (``started_monotonic``), however late its response arrives.
     """
-    if not provider or snapshot is None or not snapshot.windows:
+    if not provider or snapshot is None or not (snapshot.windows or snapshot.details):
         return
     started = time.monotonic() if started_monotonic is None else started_monotonic
     with _lock:

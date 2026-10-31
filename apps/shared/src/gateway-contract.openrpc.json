@@ -32549,7 +32549,7 @@
       },
       "ProviderUsage": {
         "additionalProperties": false,
-        "description": "``hermes_cli/inventory.py::_apply_usage`` \u2014 the provider's subscription usage, from cache.\n\nMulti-entry credential pools carry ``accounts`` (one row per account; the legacy ``windows``\nstays EMPTY there \u2014 a provider-wide percentage across different logins would be fabricated).\nSingle-account providers keep the legacy ``windows`` gauge.",
+        "description": "``hermes_cli/inventory.py::_apply_usage`` \u2014 the provider's subscription usage, from cache.\n\nMulti-entry credential pools carry ``accounts`` (one row per account; the legacy ``windows``\nstays EMPTY there \u2014 a provider-wide percentage across different logins would be fabricated).\nSingle-account providers keep the legacy ``windows`` gauge. ``details`` carries text-only\nfigures (a wallet balance, today's spend) for providers with no percentage basis.",
         "properties": {
           "windows": {
             "items": {
@@ -32572,6 +32572,13 @@
             ],
             "default": null,
             "title": "Accounts"
+          },
+          "details": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Details",
+            "type": "array"
           }
         },
         "title": "ProviderUsage",

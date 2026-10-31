@@ -532,10 +532,14 @@ class ProviderUsage(Result):
 
     Multi-entry credential pools carry ``accounts`` (one row per account; the legacy ``windows``
     stays EMPTY there — a provider-wide percentage across different logins would be fabricated).
-    Single-account providers keep the legacy ``windows`` gauge."""
+    Single-account providers keep the legacy ``windows`` gauge. ``details`` carries text-only
+    figures (a wallet balance, today's spend) for providers with no percentage basis."""
 
     windows: list[ProviderUsageWindow] = Field(default_factory=list)
     accounts: list[ProviderUsageAccount] | None = None
+    #: Wallet-style providers (a `providers:` entry with ``usage_url``) report text — balance,
+    #: today's spend — and no percentage windows, so this carries what the chip's tooltip shows.
+    details: list[str] = Field(default_factory=list)
 
 
 class ModelOptionProvider(OpenModel):

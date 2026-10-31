@@ -878,10 +878,11 @@ export interface ProviderLimit {
   resets_at?: string | null
   models?: Record<string, string> | null
 }
-/** ``hermes_cli/inventory.py::_apply_usage`` — the provider's subscription usage, from cache. Multi-entry credential pools carry ``accounts`` (one row per account; the legacy ``windows`` stays EMPTY there — a provider-wide percentage across different logins would be fabricated). Single-account providers keep the legacy ``windows`` gauge. */
+/** ``hermes_cli/inventory.py::_apply_usage`` — the provider's subscription usage, from cache. Multi-entry credential pools carry ``accounts`` (one row per account; the legacy ``windows`` stays EMPTY there — a provider-wide percentage across different logins would be fabricated). Single-account providers keep the legacy ``windows`` gauge. ``details`` carries text-only figures (a wallet balance, today's spend) for providers with no percentage basis. */
 export interface ProviderUsage {
   windows?: ProviderUsageWindow[]
   accounts?: ProviderUsageAccount[] | null
+  details?: string[]
 }
 /** One subscription usage window (``agent/account_usage.py::AccountUsageWindow``): e.g. the 5-hour session or the weekly cap, with how much of it is spent and when it rolls over (ISO). ``scope``: ``account`` — exhausting the window exhausts the whole login (Codex session/weekly, so a limited account's resets_at must wait for it); ``model`` — the window caps only one model family (Anthropic Opus/Sonnet weekly) and can never imply the account itself is out of quota. */
 export interface ProviderUsageWindow {

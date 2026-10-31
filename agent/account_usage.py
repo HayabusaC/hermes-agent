@@ -964,6 +964,11 @@ def fetch_account_usage(
 
             profile = get_provider_profile(slug)
             snapshot = _call_plugin_usage_hook(profile, base_url, api_key) if profile else None
+            if snapshot is None:
+                # A `providers:` entry may declare its own usage endpoint (wallet balance / spend).
+                from agent.custom_usage import fetch_custom_provider_usage
+
+                snapshot = fetch_custom_provider_usage(slug, base_url=base_url or "", api_key=api_key or "")
     except Exception:
         return None
     # Every fetch (``/usage``, the per-turn ``session.usage``) keeps the picker's cache current.

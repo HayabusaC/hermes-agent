@@ -332,9 +332,15 @@ def _apply_usage(rows: list[dict]) -> None:
     wanted: list[str] = []
     entry_requests: list[dict] = []
     pooled_sizes = {slug: len(entries) for slug, entries in read_credential_pool().items() if entries}
+    from agent.custom_usage import custom_usage_url
+
     for row in rows:
         slug = str(row.get("slug") or "")
-        if not slug or row.get("is_user_defined") or row.get("authenticated") is False:
+        if not slug or row.get("authenticated") is False:
+            continue
+        # User-defined providers used to be skipped outright (they have no pool). One that declares
+        # its own usage endpoint still reports a wallet, so let those through.
+        if row.get("is_user_defined") and not custom_usage_url(slug):
             continue
         supports_usage = has_account_usage(slug)
         # A single-entry pool (or no pool) is the single-account case: the legacy gauge stays
@@ -345,9 +351,14 @@ def _apply_usage(rows: list[dict]) -> None:
                 continue
             wanted.append(slug)
             snapshot = cached_account_usage(slug)
-            windows = _wire_windows(snapshot)
-            if windows and not snapshot_is_stale(snapshot):
-                row["usage"] = {"windows": windows}
+            stale = snapshot_is_stale(snapshot)
+            windows = [] if stale else _wire_windows(snapshot)
+            details = [] if stale else list(getattr(snapshot, "details", ()) or ())
+            if windows:
+                row["usage"] = {"windows": windows, **({"details": details} if details else {})}
+            elif details:
+                # Wallet-style providers report text (balance / spend), not a quota percentage.
+                row["usage"] = {"windows": [], "details": details}
             continue
         if supports_usage:
             wanted.append(slug)

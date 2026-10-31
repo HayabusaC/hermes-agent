@@ -130,11 +130,23 @@ function useChipState(provider: ModelOptionProvider): ChipState | null {
     }
   }
 
+  const details = provider.usage?.details ?? []
   const windows = usageWindows(provider)
   const tightest = windows?.[0]
 
-  if (!windows || !tightest) {
-    return null
+  if (!tightest) {
+    // Wallet-style provider (a `providers:` entry with `usage_url`): text only — a balance and
+    // today's spend, with no percentage basis — so the chip shows the first line and no bar.
+    if (!details.length) {
+      return null
+    }
+
+    return {
+      label: details[0],
+      remaining: 0,
+      tip: <span className="whitespace-pre-line">{details.join('\n')}</span>,
+      warn: false
+    }
   }
 
   const reset = (ms: null | number) => (ms === null ? null : formatReset(ms))
@@ -146,7 +158,8 @@ function useChipState(provider: ModelOptionProvider): ChipState | null {
 
   const lines = [
     ...(nearLimit ? [copy.usageTip(provider.name)] : []),
-    ...windows.map(w => copy.usageWindow(w.label, w.remaining, reset(w.resetMs)))
+    ...windows.map(w => copy.usageWindow(w.label, w.remaining, reset(w.resetMs))),
+    ...details
   ]
 
   return {

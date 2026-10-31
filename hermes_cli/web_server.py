@@ -75,6 +75,7 @@ from hermes_cli.web_server_lifecycle import (
     _report_port_in_use,
     _start_parent_death_watchdog,
     _uvicorn_console_logging,
+    _warm_account_usage,
     _warm_gateway_module,
     _write_dashboard_ready_file,
     _write_machine_sentinel_line,

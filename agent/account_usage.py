@@ -908,9 +908,62 @@ def _fetch_openrouter_account_usage(base_url: Optional[str], api_key: Optional[s
     return _snapshot("openrouter", "credits_api", windows, details)
 
 
+def _deepseek_balance_url(base_url: Optional[str]) -> str:
+    """``<root>/user/balance`` — DeepSeek's wallet endpoint sits beside the API root."""
+    base = str(base_url or "https://api.deepseek.com").strip().rstrip("/")
+    base = base.removesuffix("/v1").removesuffix("/beta")
+    return f"{base}/user/balance"
+
+
+def _fetch_deepseek_account_usage(
+    base_url: Optional[str] = None, api_key: Optional[str] = None,
+) -> Optional[AccountUsageSnapshot]:
+    """DeepSeek publishes a prepaid wallet balance (CNY) and no quota windows.
+
+    ``GET /user/balance`` → ``{"is_available": true, "balance_infos": [{"currency": "CNY",
+    "total_balance": "10.20", "granted_balance": "0.00", "topped_up_balance": "10.20"}]}``.
+    The picker shows it as text — a balance has no percentage basis.
+    """
+    from hermes_cli.config import get_env_value_prefer_dotenv
+
+    token = str(api_key or "").strip() or str(get_env_value_prefer_dotenv("DEEPSEEK_API_KEY") or "").strip()
+    if not token:
+        return None
+    try:
+        payload = _get_json(_deepseek_balance_url(base_url), {"Authorization": f"Bearer {token}"}, timeout=15.0)
+    except httpx.HTTPError:
+        raise
+    details: list[str] = []
+    for info in payload.get("balance_infos") or []:
+        if not isinstance(info, dict):
+            continue
+        currency = str(info.get("currency") or "CNY").strip().upper() or "CNY"
+        symbol = "¥" if currency == "CNY" else "$"
+        total = info.get("total_balance")
+        if total is None:
+            continue
+        extras = []
+        topped = info.get("topped_up_balance")
+        granted = info.get("granted_balance")
+        if topped not in (None, "", "0.00", "0"):
+            extras.append(f"topped up {symbol}{topped}")
+        if granted not in (None, "", "0.00", "0"):
+            extras.append(f"granted {symbol}{granted}")
+        line = f"Wallet {symbol}{total} {currency}"
+        if extras:
+            line += " (" + ", ".join(extras) + ")"
+        details.append(line)
+    if payload.get("is_available") is False:
+        details.append("Balance is not available for inference")
+    if not details:
+        return None
+    return _snapshot("deepseek", "balance_api", [], details, title="Wallet")
+
+
 _USAGE_FETCHERS: dict[str, Callable[[Optional[str], Optional[str]], Optional[AccountUsageSnapshot]]] = {
     "openai-codex": _fetch_codex_account_usage, "anthropic": _fetch_anthropic_account_usage,
     "openrouter": _fetch_openrouter_account_usage,
+    "deepseek": _fetch_deepseek_account_usage,
 }
 
 # Picker per-credential variants: same parsers/fetch shape, but a failure is never repaired by

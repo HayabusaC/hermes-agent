@@ -972,7 +972,13 @@ def fetch_account_usage(
     except Exception as exc:  # one provider's failure must not fail the picker
         # Silent None made a broken usage read indistinguishable from "this plan has no windows"
         # (Codex's chip vanished for exactly that reason). Name the provider and the error.
-        logger.warning("account usage fetch failed for %s: %s", slug or "?", exc)
+        # "No usable credentials" is not a failure worth shouting about: the startup warm-up walks
+        # the whole catalog, and a provider the user never configured has nothing to read yet.
+        _text = str(exc).lower()
+        if "no usable credentials" in _text or "credentials are missing" in _text:
+            logger.debug("account usage skipped for %s: %s", slug or "?", exc)
+        else:
+            logger.warning("account usage fetch failed for %s: %s", slug or "?", exc)
         return None
     # Every fetch (``/usage``, the per-turn ``session.usage``) keeps the picker's cache current.
     # A per-credential fetch is remembered under its account slot only; the provider-wide fetch

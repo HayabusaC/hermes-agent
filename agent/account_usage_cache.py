@@ -170,6 +170,22 @@ def _release_refresh(key: tuple[str, str, str, str]) -> None:
         _inflight.discard(key)
 
 
+def warm_provider_usage_cache() -> list[str]:
+    """Start a background refresh for every provider that can report usage; return those slugs.
+
+    Every surface that answers "what quota do I have" reads this process's cache and refreshes it
+    in the background, so a freshly started process shows nothing on the first read. Both long-lived
+    hosts (the dashboard and the gateway — the desktop's picker talks to one of them) call this at
+    startup.
+    """
+    from hermes_cli.provider_catalog import provider_catalog
+
+    slugs = [d.slug for d in provider_catalog() if has_account_usage(d.slug)]
+    if slugs:
+        refresh_account_usage_async(slugs)
+    return slugs
+
+
 def refresh_account_usage_async(providers: Iterable[str]) -> list[threading.Thread]:
     """Background-refresh the provider-wide (legacy) slot for each provider not tried within
     ``REFRESH_AFTER_S``. Returns the started threads (daemon; callers never join them)."""

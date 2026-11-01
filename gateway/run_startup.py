@@ -217,6 +217,18 @@ class GatewayStartupMixin:
                 "Turn machinery warmed in %.1fs (%d tool schema(s) materialized)",
                 time.monotonic() - t0, tool_count,
             )
+            # The desktop's model picker reads quota/wallet from whichever host serves its RPC.
+            # Warm this process's usage cache too, or the first open after a restart shows nothing
+            # for every provider until a background refresh lands.
+            try:
+                import threading
+
+                from agent.account_usage_cache import warm_provider_usage_cache
+
+                threading.Thread(target=warm_provider_usage_cache, name="warm-account-usage",
+                                 daemon=True).start()
+            except Exception:
+                logger.debug("usage cache warm-up unavailable", exc_info=True)
 
     async def _await_startup_warmup(self) -> None:
         """Bounded wait for the boot warm-up. On timeout the gate opens anyway (availability outranks

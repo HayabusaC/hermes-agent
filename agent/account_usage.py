@@ -969,7 +969,10 @@ def fetch_account_usage(
                 from agent.custom_usage import fetch_custom_provider_usage
 
                 snapshot = fetch_custom_provider_usage(slug, base_url=base_url or "", api_key=api_key or "")
-    except Exception:
+    except Exception as exc:  # one provider's failure must not fail the picker
+        # Silent None made a broken usage read indistinguishable from "this plan has no windows"
+        # (Codex's chip vanished for exactly that reason). Name the provider and the error.
+        logger.warning("account usage fetch failed for %s: %s", slug or "?", exc)
         return None
     # Every fetch (``/usage``, the per-turn ``session.usage``) keeps the picker's cache current.
     # A per-credential fetch is remembered under its account slot only; the provider-wide fetch

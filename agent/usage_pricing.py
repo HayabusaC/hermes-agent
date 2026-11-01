@@ -477,6 +477,46 @@ def _normalize_anthropic_model_name(model: str) -> str:
 _MODEL_NORMALIZERS = {"anthropic": _normalize_anthropic_model_name, "bedrock": _normalize_bedrock_model_name}
 
 
+# ── Xiaomi MiMo (open platform) ───────────────────────────────────────────────
+# https://mimo.mi.com/docs/price/pay-as-you-go — the page publishes CNY (domestic) and USD
+# (overseas) rates; the USD column is encoded here because the ledger is USD. Cache writes are
+# free ("限时免费"), cache reads bill at the "hit" rate. ASR/TTS are priced per hour / free and
+# deliberately have no token row.
+_MIMO_URL = "https://mimo.mi.com/docs/price/pay-as-you-go"
+for _slug, _inp, _read, _out in (
+    ("mimo-v2.6-pro", "0.435", "0.0036", "0.87"),
+    ("mimo-v2.6-flash", "0.14", "0.0028", "0.28"),
+    ("mimo-v2.6-pro-ultraspeed", "4.35", "0.036", "8.7"),
+):
+    _OFFICIAL_DOCS_PRICING[("xiaomi", _slug)] = _snap(
+        _inp, _out, _read, "0", url=_MIMO_URL, version="mimo-2026-10-21")
+
+# ── Z.ai (GLM) ────────────────────────────────────────────────────────────────
+# https://docs.z.ai/guides/overview/pricing — USD per 1M tokens: input, cached input,
+# cache-write storage ("Limited-time Free" → 0), output.
+_ZAI_URL = "https://docs.z.ai/guides/overview/pricing"
+for _slug, _inp, _read, _out in (
+    ("glm-5.3", "1.4", "0.26", "4.4"),
+    ("glm-5.3-flash", "0.15", "0.03", "0.50"),
+    ("glm-5.3-flashx", "0.37", "0.075", "1.25"),
+    ("glm-5.2", "1.4", "0.26", "4.4"),
+    ("glm-5.1", "1.4", "0.26", "4.4"),
+    ("glm-5", "1", "0.2", "3.2"),
+    ("glm-4.7", "0.6", "0.11", "2.2"),
+    ("glm-4.6", "0.6", "0.11", "2.2"),
+    ("glm-4.7-flashx", "0.07", "0.01", "0.4"),
+    ("glm-4.5", "0.6", "0.11", "2.2"),
+    ("glm-4.5-x", "2.2", "0.45", "8.9"),
+    ("glm-4.5-air", "0.2", "0.03", "1.1"),
+    ("glm-4.5-airx", "1.1", "0.22", "4.5"),
+    ("glm-4.6v", "0.3", "0.05", "0.9"),
+    ("glm-4.6v-flashx", "0.04", "0.004", "0.4"),
+    ("glm-4.5v", "0.6", "0.11", "1.8"),
+):
+    _OFFICIAL_DOCS_PRICING[("zai", _slug)] = _snap(
+        _inp, _out, _read, "0", url=_ZAI_URL, version="zai-glm-2026-11")
+
+
 def _lookup_official_docs_pricing(route: BillingRoute) -> Optional[PricingEntry]:
     model = route.model.lower()
     entry = _OFFICIAL_DOCS_PRICING.get((route.provider, model))

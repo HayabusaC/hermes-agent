@@ -131,9 +131,18 @@ def fetch_custom_provider_usage(provider: str, *, base_url: str = "", api_key: s
     if not url:
         return None
     key = api_key or custom_provider_credentials(provider)[0]
-    try:
-        resp = httpx.get(url, headers={"Authorization": f"Bearer {key}"} if key else {}, timeout=15.0)
-    except httpx.HTTPError:
+    # Two extra attempts: a proxied egress drops TLS often enough that a single try reports
+    # "this provider has no usage" for a vendor that answered fine a second later.
+    import time as _time
+
+    resp = None
+    for _attempt in range(3):
+        try:
+            resp = httpx.get(url, headers={"Authorization": f"Bearer {key}"} if key else {}, timeout=15.0)
+            break
+        except httpx.HTTPError:
+            _time.sleep(0.4 * (_attempt + 1))
+    if resp is None:
         return None
     if resp.status_code != 200:
         logger.debug("custom usage %s: HTTP %s", url, resp.status_code)
@@ -213,12 +222,19 @@ def fetch_custom_provider_spend(provider: str, *, api_key: str = "") -> Optional
     if not url:
         return None
     key = api_key or custom_provider_credentials(provider)[0]
-    try:
-        resp = httpx.get(url, headers={"Authorization": f"Bearer {key}"} if key else {}, timeout=10.0)
-        if resp.status_code != 200:
-            return None
-        payload = resp.json()
-    except (httpx.HTTPError, ValueError):
+    import time as _time
+
+    payload: Any = None
+    for _attempt in range(3):
+        try:
+            resp = httpx.get(url, headers={"Authorization": f"Bearer {key}"} if key else {}, timeout=10.0)
+            if resp.status_code != 200:
+                return None
+            payload = resp.json()
+            break
+        except (httpx.HTTPError, ValueError):
+            _time.sleep(0.4 * (_attempt + 1))
+    if payload is None:
         return None
     if not isinstance(payload, dict):
         return None

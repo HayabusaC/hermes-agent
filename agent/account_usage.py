@@ -600,11 +600,24 @@ def _codex_headers(token: str, account_id: Optional[str]) -> dict[str, str]:
             **codex_account_headers(token), **({"ChatGPT-Account-ID": account_id} if account_id else {})}
 
 
-def _get_json(url: str, headers: dict[str, str], *, timeout: float) -> dict:
-    with httpx.Client(timeout=timeout) as client:
-        response = client.get(url, headers=headers)
-        response.raise_for_status()
-    return response.json() or {}
+def _get_json(url: str, headers: dict[str, str], *, timeout: float, attempts: int = 3) -> dict:
+    """GET+JSON with a couple of retries: a proxied egress drops TLS often enough that a single
+    attempt turns a perfectly good quota read into "no usage" (SSL UNEXPECTED_EOF_WHILE_READING)."""
+    import time as _time
+
+    last: Optional[Exception] = None
+    for attempt in range(max(1, attempts)):
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                response = client.get(url, headers=headers)
+                response.raise_for_status()
+                return response.json() or {}
+        except (httpx.TransportError, httpx.HTTPStatusError) as exc:
+            last = exc
+            if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500:
+                raise  # a 401/403/404 will not improve on retry
+            _time.sleep(0.4 * (attempt + 1))
+    raise last if last is not None else RuntimeError("no attempt made")
 
 
 def _usage_windows(

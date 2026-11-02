@@ -63,7 +63,7 @@ function totalItems(groups: readonly CommitGroup[]) {
   return groups.reduce((sum, g) => sum + g.items.length, 0)
 }
 
-/** Release notes (stable) or the latest merged PRs (main); undefined while loading. */
+/** Release notes (stable channel); branch-tracked updates show the commit changelog instead. */
 function useUpdateNotes(status: DesktopUpdateStatus | null, updateAvailable: boolean) {
   const enabled = Boolean(status?.supported && !status.error && updateAvailable)
   const source = status && enabled ? updateNotesSource(status) : null

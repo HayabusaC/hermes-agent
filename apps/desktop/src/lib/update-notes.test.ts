@@ -56,10 +56,12 @@ describe('update notes', () => {
       kind: 'release',
       tag: 'v0.22.0'
     })
-    expect(updateNotesSource({ branch: 'main' })).toEqual({ kind: 'prs' })
+    // A fork-backed backend is tracked on `main` too, and the status names no repository, so
+    // branch updates must not borrow the official repo's PR titles: no fetched notes at all.
+    expect(updateNotesSource({ branch: 'main' })).toBeNull()
     expect(updateNotesSource({ branch: 'my-feature' })).toBeNull()
     expect(updateNotesSource({ branch: 'my-feature', channel: 'main' })).toBeNull()
-    expect(updateNotesSource({ channel: 'main' })).toEqual({ kind: 'prs' })
+    expect(updateNotesSource({ channel: 'main' })).toBeNull()
     expect(updateNotesSource({ channel: 'stable', rollback: true, sourceVersion: '0.21.0' })).toBeNull()
   })
 })

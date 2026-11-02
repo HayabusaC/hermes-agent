@@ -48,8 +48,13 @@ export function updateNotesSource(status: NotesStatus): null | UpdateNotesSource
     return { kind: 'release', tag: updateReleaseTag(status) }
   }
 
-  // A named branch decides on its own; only a branch-less status (packaged feed) goes by channel.
-  return (status.branch ?? status.channel) === 'main' ? { kind: 'prs' } : null
+  // Branch-tracked (git) updates get no fetched notes: the only feed this could read is the
+  // OFFICIAL repository's newest merged PRs, and a fork-backed backend is tracked on `main`
+  // too — the status payload names no repository, so nothing here can tell the two apart.
+  // Rendering upstream titles under "新增" for an update that installs entirely different
+  // commits is worse than no summary: the overlay's own commit changelog (the backend's
+  // `commits`, which ARE this update) is exact, so fall back to it.
+  return null
 }
 
 const isSha = (value?: string): value is string => Boolean(value && /^[0-9a-f]{7,40}$/i.test(value))

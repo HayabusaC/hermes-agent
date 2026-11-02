@@ -19,7 +19,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone, UTC
 from pathlib import Path
-from typing import Any, Callable, NamedTuple, Optional
+from typing import Any, Callable, Iterable, NamedTuple, Optional
 from hermes_dir_acl import make_user_dir
 
 from gateway.status_inline_source import (
@@ -1093,7 +1093,8 @@ def _prepare_runtime_status_update(
     parked_profiles: Any = _UNSET, multiplex_standalone_reason: Any = _UNSET,
     platform_metrics: Any = _UNSET,
     ingress_url: Any = _UNSET, listener_base: Any = _UNSET, clear_profile_platforms: bool = False,
-    drop_profile_platforms: Optional[str] = None, keep_platforms: Any = _UNSET,
+    drop_profile_platforms: Optional[str] = None, keep_platforms: Iterable[str] = (),
+    own_platforms: Optional[Iterable[str]] = None,
     load_existing: bool = True, reload_existing: bool = False,
 ) -> tuple[Path, dict[str, Any], dict[str, Any]]:
     """Merge one update into the process-wide canonical status snapshot."""
@@ -1117,15 +1118,15 @@ def _prepare_runtime_status_update(
             payload["platforms"] = {
                 k: v for k, v in payload["platforms"].items()
                 if not isinstance(k, str) or ":" not in k
-                or (drop_prefix is not None and not k.startswith(drop_prefix))
+                or (drop_prefix is not None and not k.startswith(drop_prefix)) or k in keep_platforms
             }
-        if keep_platforms is not _UNSET and keep_platforms is not None:
+        if own_platforms is not None:
             # The merge keeps whatever the file already held, so a platform that was fatally rejected
             # (or merely connected) in an earlier run kept rendering as TODAY's platform state —
             # `hermes gateway status` reported a revoked token forever after the platform was
             # disabled. Startup passes the platforms it actually owns; anything else that is not
             # profile-scoped ("<profile>:<platform>", written by a multiplexed child) is dropped.
-            keep = {str(p) for p in keep_platforms}
+            keep = {str(p) for p in own_platforms}
             payload["platforms"] = {
                 k: v for k, v in payload["platforms"].items()
                 if (isinstance(k, str) and ":" in k) or str(k) in keep

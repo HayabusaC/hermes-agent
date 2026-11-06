@@ -1,4 +1,5 @@
 import { compactNumber } from '@hermes/shared'
+import { useStore } from '@nanostores/react'
 import { type MouseEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { COST_LABELS, cnyFromUsd } from '@/lib/cost-display'
@@ -32,6 +33,7 @@ import { fmtDateTime } from '@/lib/time'
 import { useStoreSelector } from '@/lib/use-session-slice'
 import { cn } from '@/lib/utils'
 import { upsertDesktopActionTask } from '@/store/activity'
+import { $cloudOwnsUpdates } from '@/store/cloud-updates'
 import { $pinnedSessionIds, pinSession, SIDEBAR_SESSIONS_PAGE_SIZE, unpinSession } from '@/store/layout'
 import { notify } from '@/store/notifications'
 import { $sessionProfilesTruncated, $sessions, sessionPinId } from '@/store/session'
@@ -127,6 +129,19 @@ function RowIconButton({
         {children}
       </Button>
     </Tip>
+  )
+}
+
+/** The System card's Update button. Hermes Cloud updates its agents itself, so it has none there. */
+function UpdateHermesButton({ label, onClick }: { label: string; onClick: () => void }) {
+  if (useStore($cloudOwnsUpdates).backend) {
+    return null
+  }
+
+  return (
+    <Button onClick={onClick} size="xs" variant="textStrong">
+      {label}
+    </Button>
   )
 }
 
@@ -508,9 +523,7 @@ export function CommandCenterView({
                           <Button onClick={() => void runSystemAction('restart')} size="xs" variant="text">
                             {cc.restartGateway}
                           </Button>
-                          <Button onClick={() => void runSystemAction('update')} size="xs" variant="textStrong">
-                            {cc.updateHermes}
-                          </Button>
+                          <UpdateHermesButton label={cc.updateHermes} onClick={() => void runSystemAction('update')} />
                         </div>
                       </div>
                       {systemAction && (

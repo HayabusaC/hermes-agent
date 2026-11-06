@@ -54,20 +54,25 @@ jobs:
         with:
           fetch-depth: 0   # tags: the installer version comes from the upstream tag
 
-      # Upstream's ROOT package.json now requires node >=26 (and npm outside
-      # 11.10.0-11.17.0): `npm ci` refuses to run on the 22 the desktop workspace
-      # alone would accept.
-      - name: Set up Node
-        uses: actions/setup-node@v4
+      # Upstream moved the JS workspaces from npm to pnpm (2026-11): the root
+      # package.json requires node >=26, declares pnpm 12.15.0 in devEngines and
+      # its `preinstall` hook rejects an npm install, while package-lock.json is
+      # gone in favour of pnpm-lock.yaml. The pinned toolchain therefore comes
+      # from pm/lock.json through upstream's own action — not setup-node, which
+      # would hand us a node/pnpm pair the repo's own scripts refuse.
+      - name: Set up the locked Node toolchain
+        uses: ./.github/actions/setup-pm
         with:
-          node-version: '26'
-          cache: npm
+          toolchain: node
+          cache-python: false
 
       - name: Node toolchain
-        run: node -v; npm -v
+        run: node -v; pnpm -v; npm -v
 
       - name: Install workspace dependencies
-        run: npm ci --no-audit --no-fund
+        uses: ./.github/actions/retry
+        with:
+          command: pnpm install --frozen-lockfile
 
       # apps/desktop/package.json ships version 0.0.0 — upstream injects the real
       # version at release time. Without this, latest.yml also says 0.0.0 and
@@ -95,24 +100,26 @@ jobs:
             $ver = "$base-$env:GITHUB_RUN_NUMBER"
           }
           "installer version: $ver  (package.json shipped $(node -p "require('./package.json').version"))"
-          npm pkg set version=$ver
+          # `npm pkg set` would ride npm, which this workspace no longer has a
+          # lockfile for: write the field directly, keeping pnpm's 2-space JSON.
+          node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync('package.json','utf8'));j.version=process.argv[1];fs.writeFileSync('package.json',JSON.stringify(j,null,2)+'\n')" $ver
 
       - name: Typecheck (fails fast on a bad local patch)
         working-directory: apps/desktop
-        run: npm run typecheck
+        run: pnpm run typecheck
 
       - name: Build renderer and main process
         working-directory: apps/desktop
-        run: npm run build
+        run: pnpm run build
 
       - name: Package the NSIS installer
         working-directory: apps/desktop
-        # `npm run builder` is upstream's prepared-packaging wrapper: it admits
+        # `pnpm run builder` is upstream's prepared-packaging wrapper: it admits
         # only the formats its preparation step acquired (dir/msix/zip on
         # Windows), so `--win nsis` is refused there with
         # "Argument is not admitted by prepared packaging". electron-builder
         # itself supports nsis and fetches its own tools, so call it directly.
-        run: npx electron-builder --config electron-builder.config.cjs --win nsis --publish never
+        run: pnpm exec electron-builder --config electron-builder.config.cjs --win nsis --publish never
 
       # electron-builder only writes latest.yml for providers that carry a
       # channel of their own. With the generic provider (what this fork uses so

@@ -125,7 +125,8 @@ _KNOWN_PROVIDER_KEYS = {
     "usage_url",
     # Currency the usage endpoint's figures are really in (a reseller labeling CNY as USD), and
     # the rate to convert them for the USD-denominated cost ledger.
-    "currency", "usd_per_cny"}
+    "currency", "usd_per_cny",
+    "gemini_api"}  # read by the gemini provider plugin (which Gemini API a model's calls use)
 
 
 def _pick_provider_base_url(entry: dict[str, Any], provider_key: str) -> str:

@@ -1584,6 +1584,19 @@ def _profile_live_catalog(normalized: str) -> Optional[list[str]]:
         # Same merge as setup (`_model_flow_plugin_provider`) so /model, the Desktop picker and
         # `hermes model` offer one list: live ids plus any pinned id the probe omitted.
         return merge_profile_catalog(normalized, profile, list(live) if live else None)
+    # A profile that MINTS its own runtime credential (an OAuth / subscription login such as the
+    # antigravity plugin) is not an ``api_key`` profile, so there is no env key for
+    # ``_api_key_credentials`` to find — but it can answer a live catalog probe with the credential
+    # it owns. Without this branch such a provider was pinned to ``fallback_models`` forever: its
+    # published catalogue never reached any picker, and a correct ``fetch_models`` stayed dead code
+    # while the user's list froze on whatever the plugin happened to ship.
+    from hermes_cli.auth_plugin_providers import profile_owns_runtime_credential
+
+    if profile.auth_type != "api_key" and profile_owns_runtime_credential(profile):
+        api_key, base_url = _api_key_credentials(normalized)
+        if not api_key:
+            return list(profile.fallback_models) or None
+        return probe_profile_catalog(normalized, profile, api_key, base_url or profile.base_url or None)
     if not (profile.auth_type == "api_key" and profile.base_url):
         return list(profile.fallback_models) or None
     api_key, base_url = _api_key_credentials(normalized)

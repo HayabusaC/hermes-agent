@@ -162,6 +162,12 @@ class ProviderProfile:
     env_vars: tuple = ()
     base_url: str = ""
     models_url: str = ""  # explicit models endpoint; falls back to {base_url}/models
+    # Some backends police WHICH harness is talking to them and reject a foreign agent prompt
+    # (Cloud Code's antigravity endpoint answers 429 RESOURCE_EXHAUSTED to Hermes' system prompt).
+    # A profile may declare the self-introduction such a backend expects; the prompt builder then
+    # uses it INSTEAD of SOUL.md / the default Hermes identity for this provider only. Empty = the
+    # normal Hermes identity.
+    system_identity_override: str = ""
     auth_type: str = "api_key"   # api_key|oauth_device_code|oauth_external|external_process|aws_sdk|plugin-defined
     # None preserves transport defaults (external-process clients default to non-streaming).
     # True opts a streaming-capable process client in; False disables streaming for this provider.

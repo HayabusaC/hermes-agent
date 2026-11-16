@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from agent.system_prompt import build_system_prompt, build_system_prompt_parts
+from agent.system_prompt import _identity_parts, build_system_prompt, build_system_prompt_parts
 
 
 def _make_agent(**overrides):
@@ -38,6 +38,33 @@ def _make_agent(**overrides):
     )
     base.update(overrides)
     return SimpleNamespace(**base)
+
+
+def test_provider_declared_identity_replaces_soul_for_that_provider_only(monkeypatch):
+    """A backend that polices the harness identity (Cloud Code antigravity) gets its declared
+    self-introduction instead of SOUL.md; every other provider keeps the Hermes persona."""
+    agy_intro = "You are Antigravity, a powerful agentic AI coding assistant."
+    fake = SimpleNamespace(system_identity_override=agy_intro)
+    monkeypatch.setattr("providers.get_provider_profile", lambda name: fake if name == "antigravity" else None)
+    monkeypatch.setattr("agent.prompt_builder.load_soul_md", lambda *a, **k: "You are Hermes Agent. Be direct:")
+
+    parts, soul_loaded = _identity_parts(_make_agent(provider="antigravity", load_soul_identity=True), 200_000)
+    assert parts == [agy_intro]
+    assert soul_loaded is False
+
+    parts, soul_loaded = _identity_parts(_make_agent(provider="hepai", load_soul_identity=True), 200_000)
+    assert parts == ["You are Hermes Agent. Be direct:"]
+    assert soul_loaded is True
+
+
+def test_identity_falls_back_when_the_provider_lookup_fails(monkeypatch):
+    def boom(_name):
+        raise RuntimeError("provider registry unavailable")
+
+    monkeypatch.setattr("providers.get_provider_profile", boom)
+    monkeypatch.setattr("agent.prompt_builder.load_soul_md", lambda *a, **k: "")
+    parts, _ = _identity_parts(_make_agent(provider="antigravity", load_soul_identity=True), 200_000)
+    assert parts[0].startswith("You are Hermes Agent")
 
 
 def _captured_context_cwd(agent):

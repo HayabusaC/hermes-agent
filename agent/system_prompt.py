@@ -560,10 +560,29 @@ def _memory_parts(agent: Any) -> list[str]:
     return parts
 
 
+def _provider_identity_override(agent: Any) -> str:
+    """Identity text a backend demands instead of Hermes' own (``system_identity_override``).
+
+    Cloud Code's antigravity endpoint answers ``429 RESOURCE_EXHAUSTED`` to a third-party agent
+    prompt, so its profile declares the harness self-introduction that backend expects. Scoped to
+    that provider: every other provider still gets SOUL.md / ``DEFAULT_AGENT_IDENTITY``.
+    """
+    try:
+        from providers import get_provider_profile
+
+        profile = get_provider_profile(getattr(agent, "provider", "") or "")
+    except Exception:
+        return ""
+    return str(getattr(profile, "system_identity_override", "") or "").strip()
+
+
 def _identity_parts(agent: Any, ctx_len: Optional[int]) -> tuple[list[str], bool]:
     """SOUL.md (primary identity; cron keeps the persona while skipping cwd
     instructions, scoped to the agent's OWN home) or the default identity.
     Returns ``(parts, soul_loaded)``."""
+    override = _provider_identity_override(agent)
+    if override:
+        return ([override], False)
     wants_soul = agent.load_soul_identity or not agent.skip_context_files
     _soul_content = _pb.load_soul_md(ctx_len, home_override=_agent_home(agent)) if wants_soul else None
     return ([_soul_content], True) if _soul_content else ([DEFAULT_AGENT_IDENTITY], False)

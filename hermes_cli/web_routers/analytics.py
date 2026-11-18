@@ -5,7 +5,6 @@ Extracted from ``hermes_cli.web_server``; app state and helpers are late-bound t
 """
 
 import asyncio
-import sqlite3
 import time
 from typing import Any, Dict, List, Optional
 
@@ -78,10 +77,6 @@ async def update_config_raw(body: RawConfigUpdate, profile: Optional[str] = None
         return await asyncio.to_thread(_run)
 
 
-def _rows(db, sql: str, cutoff: float) -> list[dict[str, Any]]:
-    return [dict(r) for r in db._conn.execute(sql, (cutoff,)).fetchall()]
-
-
 def _model_identity(model: str, provider: str) -> tuple[str, str]:
     """Grouping key that treats ``x`` and ``vendor/x`` as one model for a provider.
 
@@ -122,75 +117,24 @@ def _normalize_by_model(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _get_usage_analytics(days: int = 30, profile: Optional[str] = None):
     from agent.insights import InsightsEngine
 
-    db = _open_session_db_for_profile(profile, read_only=True)
+    persistence = _open_session_db_for_profile(profile, read_only=True)
     try:
         cutoff = time.time() - (days * 86400)
-        # Local calendar day, per-row (DST-correct), the same day /insights uses (agent/insights.py).
-        daily = _rows(db, """
-            SELECT date(COALESCE(last_activity_at, started_at), 'unixepoch', 'localtime') as day,
-                   SUM(input_tokens) as input_tokens,
-                   SUM(output_tokens) as output_tokens,
-                   SUM(cache_read_tokens) as cache_read_tokens,
-                   SUM(reasoning_tokens) as reasoning_tokens,
-                   COALESCE(SUM(estimated_cost_usd), 0) as estimated_cost,
-                   COALESCE(SUM(actual_cost_usd), 0) as actual_cost,
-                   COUNT(*) as sessions,
-                   SUM(COALESCE(api_call_count, 0)) as api_calls
-            FROM sessions WHERE COALESCE(last_activity_at, started_at) > ?
-            GROUP BY day ORDER BY day
-        """, cutoff)
-
-        by_model = _rows(db, """
-            SELECT model,
-                   COALESCE(billing_provider, '') as provider,
-                   SUM(input_tokens) as input_tokens,
-                   SUM(output_tokens) as output_tokens,
-                   COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
-                   COALESCE(SUM(cache_write_tokens), 0) as cache_write_tokens,
-                   COALESCE(SUM(reasoning_tokens), 0) as reasoning_tokens,
-                   COALESCE(SUM(estimated_cost_usd), 0) as estimated_cost,
-                   COALESCE(SUM(actual_cost_usd), 0) as actual_cost,
-                   -- Invoice-first PER SESSION, the same expression totals.total_cost
-                   -- uses. Exposing estimated/actual separately made a row pick the
-                   -- invoice once ANY of its sessions settled, silently dropping the
-                   -- estimate of its unsettled sessions — so the rows did not add up
-                   -- to the total. `cost` is the comparable number.
-                   COALESCE(SUM(CASE WHEN COALESCE(actual_cost_usd, 0) > 0
-                                     THEN actual_cost_usd
-                                     ELSE COALESCE(estimated_cost_usd, 0) END), 0) as cost,
-                   COUNT(*) as sessions,
-                   SUM(COALESCE(api_call_count, 0)) as api_calls
-            FROM sessions WHERE COALESCE(last_activity_at, started_at) > ? AND model IS NOT NULL
-            GROUP BY model, provider ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC
-        """, cutoff)
+        analytics = persistence.usage_analytics
+        # Windowed on the session's last ACTIVITY, not its start: a conversation opened days ago that
+        # is still spending belongs in the window (the default view is 1 day). Local calendar day,
+        # per-row (DST-correct), the same day /insights uses (agent/insights.py).
+        daily = analytics.activity_daily_usage(active_after=cutoff)
+        by_model = analytics.activity_session_usage_by_model(active_after=cutoff)
 
         # Fold in auxiliary usage (vision, compression, ...) from session_model_usage.
         # Aux calls never touch the sessions counters, so this is add-only — no double count.
         # Without it the models list shows only the main agent model even when aux models are actively
         # burning tokens (issue #23270).
-        aux_rows = _aux_usage_rows(db, cutoff)
+        aux_rows = _aux_usage_rows(persistence, cutoff)
         by_model = _merge_aux_into_by_model(by_model, aux_rows)
 
-        totals = _rows(db, """
-            SELECT SUM(input_tokens) as total_input,
-                   SUM(output_tokens) as total_output,
-                   SUM(cache_read_tokens) as total_cache_read,
-                   SUM(reasoning_tokens) as total_reasoning,
-                   COALESCE(SUM(estimated_cost_usd), 0) as total_estimated_cost,
-                   COALESCE(SUM(actual_cost_usd), 0) as total_actual_cost,
-                   -- Invoice-first per SESSION, then summed: a settled session must not
-                   -- contribute its estimate too, and an unsettled one still counts.
-                   COALESCE(SUM(CASE WHEN COALESCE(actual_cost_usd, 0) > 0
-                                     THEN actual_cost_usd
-                                     ELSE COALESCE(estimated_cost_usd, 0) END), 0) as total_cost,
-                   COUNT(*) as total_sessions,
-                   SUM(COALESCE(api_call_count, 0)) as total_api_calls
-            -- Window on ACTIVITY, not on session start: a conversation that began
-            -- two days ago and is still running is spending money in this window.
-            -- Filtering on started_at silently dropped it (and every long-lived
-            -- session) from "1 day", which is exactly the case this panel is read in.
-            FROM sessions WHERE COALESCE(last_activity_at, started_at) > ?
-        """, cutoff)[0]
+        totals = analytics.activity_session_usage_totals(active_after=cutoff)
         by_model = _normalize_by_model(by_model)
 
         # Auxiliary calls (background review, title generation, approval summaries,
@@ -205,7 +149,7 @@ def _get_usage_analytics(days: int = 30, profile: Optional[str] = None):
             totals["total_cost"] = (totals.get("total_cost") or 0) + aux_cost
             totals["total_estimated_cost"] = (totals.get("total_estimated_cost") or 0) + aux_cost
 
-        usage = InsightsEngine(db).get_usage_breakdown(days=days)
+        usage = InsightsEngine(None, persistence=persistence).get_usage_breakdown(days=days)
 
         return {
             "daily": daily,
@@ -217,7 +161,7 @@ def _get_usage_analytics(days: int = 30, profile: Optional[str] = None):
             "tools": usage["tools"],  # per-tool-name counts; desktop aggregates per toolset
         }
     finally:
-        db.close()
+        persistence.close()
 
 
 @router.get("/api/analytics/usage")
@@ -348,21 +292,17 @@ _MODEL_CARD_KEYS = (
 )
 
 
-def _attach_tool_calls(db, cutoff: float, raw_rows: list[dict[str, Any]]) -> None:
+def _attach_tool_calls(persistence, cutoff: float, raw_rows: list[dict[str, Any]]) -> None:
     """Fill the ``tool_calls`` card metric for per-call rows, in place.
 
     Tool calls are session-level data (``sessions.tool_call_count``), not per API
-    call, so they cannot come from ``session_model_usage``. Attribute each
+    call, so they cannot come from the per-call usage rows. Attribute each
     session-window (model, billing_provider) tool-call total to the card of the
     pair its sessions row records — the session's last active route — falling
     back to any card of that model when the pair has no per-call row (route
     switched after the last call). Never zeroes the metric (#71778).
     """
-    pair_rows = _rows(db, """
-        SELECT model, billing_provider, SUM(COALESCE(tool_call_count, 0)) as tool_calls
-        FROM sessions WHERE started_at > ? AND model IS NOT NULL AND model != ''
-        GROUP BY model, billing_provider
-    """, cutoff)
+    pair_rows = persistence.usage_analytics.session_tool_calls_by_route(started_after=cutoff)
     by_pair = {
         (r.get("model") or "", r.get("billing_provider") or ""): r.get("tool_calls") or 0
         for r in pair_rows
@@ -381,9 +321,12 @@ def _attach_tool_calls(db, cutoff: float, raw_rows: list[dict[str, Any]]) -> Non
 
 def _get_models_analytics(days: int = 30, profile: Optional[str] = None):
     """Per-model token/cost/session breakdown plus models.dev capability metadata."""
-    db = _open_session_db_for_profile(profile, read_only=True)
+    from persistence.core.errors import TransientStoreError
+
+    persistence = _open_session_db_for_profile(profile, read_only=True)
     try:
         cutoff = time.time() - (days * 86400)
+        analytics = persistence.usage_analytics
 
         # Main usage from session_model_usage: every API call's delta lands there
         # with the model/provider active at call time, so a mid-session /model
@@ -392,52 +335,15 @@ def _get_models_analytics(days: int = 30, profile: Optional[str] = None):
         # grouping it attributed the whole session to it (#71778). Insights
         # (_compute_model_breakdown) reads the same table.
         try:
-            cur = db._conn.execute("""
-                SELECT u.model,
-                       u.billing_provider,
-                       SUM(u.input_tokens) as input_tokens,
-                       SUM(u.output_tokens) as output_tokens,
-                       SUM(u.cache_read_tokens) as cache_read_tokens,
-                       SUM(u.reasoning_tokens) as reasoning_tokens,
-                       COALESCE(SUM(u.estimated_cost_usd), 0) as estimated_cost,
-                       COALESCE(SUM(u.actual_cost_usd), 0) as actual_cost,
-                       COUNT(DISTINCT u.session_id) as sessions,
-                       SUM(COALESCE(u.api_call_count, 0)) as api_calls,
-                       MAX(u.last_seen) as last_used_at,
-                       AVG(u.input_tokens + u.output_tokens) as avg_tokens_per_session
-                FROM session_model_usage u
-                JOIN sessions s ON s.id = u.session_id
-                WHERE s.started_at > ? AND u.model IS NOT NULL AND u.model != ''
-                      AND u.task = ''
-                GROUP BY u.model, u.billing_provider
-                ORDER BY SUM(u.input_tokens) + SUM(u.output_tokens) DESC
-            """, (cutoff,))
-            raw_rows = [dict(r) for r in cur.fetchall()]
-        except sqlite3.OperationalError:
-            raw_rows = []  # pre-v17 DB without session_model_usage
+            raw_rows = analytics.call_usage_by_route(started_after=cutoff)
+        except TransientStoreError:
+            raw_rows = []
         if not raw_rows:
             # No per-call rows in the window (pre-table DB): fall back to the
             # sessions aggregate, which for those sessions is the only source.
-            raw_rows = _rows(db, """
-                SELECT model,
-                       billing_provider,
-                       SUM(input_tokens) as input_tokens,
-                       SUM(output_tokens) as output_tokens,
-                       SUM(cache_read_tokens) as cache_read_tokens,
-                       SUM(reasoning_tokens) as reasoning_tokens,
-                       COALESCE(SUM(estimated_cost_usd), 0) as estimated_cost,
-                       COALESCE(SUM(actual_cost_usd), 0) as actual_cost,
-                       COUNT(*) as sessions,
-                       SUM(COALESCE(api_call_count, 0)) as api_calls,
-                       SUM(tool_call_count) as tool_calls,
-                       MAX(started_at) as last_used_at,
-                       AVG(input_tokens + output_tokens) as avg_tokens_per_session
-                FROM sessions WHERE started_at > ? AND model IS NOT NULL AND model != ''
-                GROUP BY model, billing_provider
-                ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC
-            """, cutoff)
+            raw_rows = analytics.session_usage_by_route(started_after=cutoff)
         else:
-            _attach_tool_calls(db, cutoff, raw_rows)
+            _attach_tool_calls(persistence, cutoff, raw_rows)
 
         # Aux usage (vision/compression/title/approval/...) is folded into the
         # (model, provider) row the sessions query already produced. #23270 made
@@ -446,7 +352,7 @@ def _get_models_analytics(days: int = 30, profile: Optional[str] = None):
         # the main card, and their session counts summed past
         # totals.total_sessions (#89631). Only a pair with no sessions-derived
         # row becomes a new row, carrying its own session count.
-        _merge_aux_into_rows(raw_rows, _aux_usage_rows(db, cutoff))
+        _merge_aux_into_rows(raw_rows, _aux_usage_rows(persistence, cutoff))
 
         rows = _fold_session_only_rows(raw_rows)
         rows.sort(
@@ -464,17 +370,7 @@ def _get_models_analytics(days: int = 30, profile: Optional[str] = None):
             for row in rows
         ]
 
-        totals = _rows(db, """
-            SELECT SUM(input_tokens) as total_input,
-                   SUM(output_tokens) as total_output,
-                   SUM(cache_read_tokens) as total_cache_read,
-                   SUM(reasoning_tokens) as total_reasoning,
-                   COALESCE(SUM(estimated_cost_usd), 0) as total_estimated_cost,
-                   COALESCE(SUM(actual_cost_usd), 0) as total_actual_cost,
-                   COUNT(*) as total_sessions,
-                   SUM(COALESCE(api_call_count, 0)) as total_api_calls
-            FROM sessions WHERE started_at > ? AND model IS NOT NULL AND model != ''
-        """, cutoff)[0]
+        totals = analytics.session_usage_totals(started_after=cutoff, model_rows_only=True)
         # Counted over the same merged row set the cards come from, so a model
         # reached only through auxiliary usage is in the header as well as on
         # the page (#89631).
@@ -482,7 +378,7 @@ def _get_models_analytics(days: int = 30, profile: Optional[str] = None):
 
         return {"models": models, "totals": totals, "period_days": days}
     finally:
-        db.close()
+        persistence.close()
 
 
 @router.get("/api/analytics/models")

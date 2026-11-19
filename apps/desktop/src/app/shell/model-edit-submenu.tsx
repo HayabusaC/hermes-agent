@@ -169,7 +169,6 @@ export function ModelOptionsContent({
 
   const hasFast = fastControl.kind !== 'none'
   const unsupportedSpeed = fastControl.kind === 'param' && fastControl.canEnable === false
-
   // What the model IS, before how it is configured: limits and list price.
   const compactTokens = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n))
   const metaRows: Array<[string, string]> = []
@@ -180,8 +179,14 @@ export function ModelOptionsContent({
       ? `${pricing.input || '?'} / ${pricing.output || '?'}`
       : ''
   if (priceText) metaRows.push(['价格 $/M', priceText])
-  const ultrafastOn = serviceTier === 'ultrafast'
-  const fastOn = fastControl.kind === 'none' ? false : fastControl.on && !ultrafastOn
+  const ultrafastOn = ultrafastSupported && serviceTier === 'ultrafast'
+
+  const fastOn =
+    fastControl.kind === 'none'
+      ? false
+      : fastControl.kind === 'variant'
+        ? fastControl.on
+        : fastControl.on && serviceTier !== 'ultrafast'
 
   return !hasFast && !ultrafastSupported && !daybreak && !reasoning && metaRows.length === 0 ? (
     <div className="px-2.5 py-3 text-xs text-(--ui-text-tertiary)">{copy.noOptions}</div>

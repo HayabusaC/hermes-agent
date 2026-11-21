@@ -1300,7 +1300,6 @@ export function ContribWiring({ children }: { children: ReactNode }) {
         <SharedMetricsConsentDialog
           enabled={gatewayState === 'open'}
           profile={activeGatewayProfile}
-          requestGateway={requestGateway}
         />
       )}
       {/* One host for every free-tier sign-in entry point (Settings › Billing,

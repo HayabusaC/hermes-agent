@@ -252,6 +252,7 @@ export {
   Search,
   SearchIcon,
   Send,
+  Server,
   Settings,
   Settings2,
   ShieldLock,

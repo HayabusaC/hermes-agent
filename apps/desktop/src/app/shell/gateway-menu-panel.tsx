@@ -6,13 +6,13 @@ import { LogView } from '@/components/ui/log-view'
 import { Tip } from '@/components/ui/tooltip'
 import { getLogs } from '@/hermes'
 import { useI18n } from '@/i18n'
-import { LayoutDashboard, Power, RefreshCw } from '@/lib/icons'
+import { LayoutDashboard, Power, RefreshCw, Server } from '@/lib/icons'
 import { platformStatusTone } from '@/lib/platform-status'
 import type { RuntimeReadinessResult } from '@/lib/runtime-readiness'
 import { cn } from '@/lib/utils'
 import { reconnectGateway } from '@/store/gateway-reconnect'
 import { notifyError } from '@/store/notifications'
-import { runGatewayRestart } from '@/store/system-actions'
+import { runBackendRestart, runGatewayRestart } from '@/store/system-actions'
 import type { StatusResponse } from '@/types/hermes'
 
 interface GatewayMenuPanelProps {
@@ -106,6 +106,13 @@ export function GatewayMenuPanel({
     void runGatewayRestart()
   }
 
+  // The backend itself (the process serving this panel), not the messaging gateway: a different
+  // unit, a different symptom (stale code / wedged RPC), the same fire-and-close shape.
+  const restartBackend = () => {
+    onClose()
+    void runBackendRestart()
+  }
+
   const reconnect = () => {
     if (reconnecting) {
       return
@@ -189,8 +196,22 @@ export function GatewayMenuPanel({
           </Tip>
           {/* Restart is the heavy, disruptive action: keep it visually distinct
               (power icon, destructive hover) and separated from the benign
-              reconnect/system buttons so it can't be hit by mistake. */}
+              reconnect/system buttons so it can't be hit by mistake. The two
+              restarts are deliberately adjacent but separate: the server icon
+              rebuilds the backend serving this panel, the power icon rebuilds
+              the messaging gateway. */}
           <span aria-hidden className="mx-1 h-4 w-px bg-border/70" />
+          <Tip label={t.settings.model.restartBackend}>
+            <Button
+              aria-label={t.settings.model.restartBackend}
+              className="text-muted-foreground hover:text-destructive"
+              onClick={restartBackend}
+              size="icon-xs"
+              variant="ghost"
+            >
+              <Server />
+            </Button>
+          </Tip>
           <Tip label={t.commandCenter.restartGateway}>
             <Button
               aria-label={t.commandCenter.restartGateway}

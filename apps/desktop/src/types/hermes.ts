@@ -1646,6 +1646,16 @@ export interface BackendUpdateCommit {
   at: number
 }
 
+/** Shape of `POST /api/backend/restart` — restarting the backend process itself (the
+ *  systemd-managed dashboard/serve unit), as opposed to the messaging gateway. The restart is
+ *  asked for by a detached child, so `ok` means the request was accepted: the client's socket
+ *  drops as the unit stops and reconnects to the replacement. */
+export interface BackendRestartResponse {
+  ok: boolean
+  pid: number
+  unit: string
+}
+
 /** Shape of `GET /api/hermes/update/check` — the backend's own update state.
  *  Used by the desktop's remote update overlay so the backend version (not the
  *  Electron client clone) drives "what's changed + Install" in remote mode. */

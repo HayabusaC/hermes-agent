@@ -1,6 +1,6 @@
 import { atom } from 'nanostores'
 
-import { getActionStatus, getStatus, hermesApi, restartGateway } from '@/hermes'
+import { getActionStatus, getStatus, hermesApi, restartBackend, restartGateway } from '@/hermes'
 import { translateNow } from '@/i18n'
 import { sharedGatewayProfiles } from '@/lib/shared-gateway-restart'
 import { isSignedOutStatus } from '@/lib/signed-out-status'
@@ -17,6 +17,34 @@ const GATEWAY_RESTART_ACTION = 'gateway-restart'
 // indicator (glyph spinner) so the restart shows up where users already look,
 // instead of a toast that vanishes or a generic "Agents running" counter.
 export const $gatewayRestarting = atom(false)
+
+// True while a BACKEND restart is in flight (the dashboard/serve unit itself, not the messaging
+// gateway). Same placement as the gateway flag: the statusbar is where users look for state.
+export const $backendRestarting = atom(false)
+
+// Restart the backend process serving this client — the systemd-managed dashboard/serve unit.
+// Distinct from the gateway restart above: it rebuilds the very process that serves this socket
+// (and holds the agent's live state), which is what "the backend is behind its checkout" or "the
+// backend is wedged" needs. The endpoint answers before the unit stops, so the request resolving
+// proves acceptance, not completion: the socket going away IS the restart, and the same
+// probe-first reconnect follow-through rebuilds it. Never rejects.
+export async function runBackendRestart(): Promise<boolean> {
+  $backendRestarting.set(true)
+  notify({ kind: 'info', message: translateNow('settings.model.restartingBackend') })
+
+  try {
+    await restartBackend()
+
+    return true
+  } catch (err) {
+    notifyError(err, translateNow('settings.model.restartFailed'))
+
+    return false
+  } finally {
+    $backendRestarting.set(false)
+    void reconnectGateway({ source: 'restart-followthrough' }).catch(() => undefined)
+  }
+}
 
 // Poll a backend action to completion (or a bounded window), throwing on a
 // non-zero exit so the caller can surface the failure. In no-service installs

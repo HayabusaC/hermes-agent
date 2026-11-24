@@ -112,6 +112,7 @@ import {
   IconSearch as SearchIcon,
   IconSend as Send,
   IconSettings as Settings,
+  IconServer as Server,
   IconSettings2 as Settings2,
   IconShieldLock as ShieldLock,
   IconAdjustmentsHorizontal as SlidersHorizontal,

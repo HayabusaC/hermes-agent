@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   notifyError: vi.fn(),
-  reconnectGateway: vi.fn<() => Promise<void>>()
+  reconnectGateway: vi.fn<() => Promise<void>>(),
+  runBackendRestart: vi.fn(),
+  runGatewayRestart: vi.fn()
 }))
 
 vi.mock('@/components/ui/tooltip', () => ({
@@ -33,6 +35,9 @@ vi.mock('@/i18n', () => ({
           reconnectGateway: 'Reconnect gateway',
           viewAllLogs: 'View all logs'
         }
+      },
+      settings: {
+        model: { restartBackend: 'Restart backend' }
       }
     }
   })
@@ -47,7 +52,8 @@ vi.mock('@/store/notifications', () => ({
 }))
 
 vi.mock('@/store/system-actions', () => ({
-  runGatewayRestart: vi.fn()
+  runBackendRestart: mocks.runBackendRestart,
+  runGatewayRestart: mocks.runGatewayRestart
 }))
 
 import { GatewayMenuPanel } from './gateway-menu-panel'
@@ -99,5 +105,31 @@ describe('GatewayMenuPanel reconnect action', () => {
     const reconnect = screen.getByRole('button', { name: 'Reconnect gateway' })
     await act(async () => fireEvent.click(reconnect))
     expect(mocks.reconnectGateway).toHaveBeenCalledOnce()
+  })
+
+  it('restarts the backend from its own button, beside the gateway one', async () => {
+    const onClose = vi.fn()
+
+    render(
+      <GatewayMenuPanel
+        gatewayState="open"
+        inferenceStatus={null}
+        onClose={onClose}
+        onOpenSystem={vi.fn()}
+        statusSnapshot={null}
+      />
+    )
+    await act(async () => undefined)
+
+    // Two distinct restarts: the backend serving this panel and the messaging gateway.
+    const backend = screen.getByRole('button', { name: 'Restart backend' })
+    const gateway = screen.getByRole('button', { name: 'Restart gateway' })
+
+    await act(async () => fireEvent.click(backend))
+
+    expect(mocks.runBackendRestart).toHaveBeenCalledOnce()
+    expect(mocks.runGatewayRestart).not.toHaveBeenCalled()
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(gateway).not.toBe(backend)
   })
 })

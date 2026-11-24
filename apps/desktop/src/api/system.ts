@@ -5,6 +5,7 @@ import type {
   AudioSttLeaseResponse,
   AudioTranscriptionResponse,
   AudioTtsLeaseResponse,
+  BackendRestartResponse,
   BackendUpdateCheckResponse,
   CuratorStatusResponse,
   DebugShareResponse,
@@ -149,6 +150,18 @@ export function restartGateway(profile?: null | string): Promise<ActionResponse>
   return hermesApi<ActionResponse>({
     ...profileScoped(profile),
     path: '/api/gateway/restart',
+    method: 'POST'
+  })
+}
+
+/** Restart the backend process serving this client — the systemd-managed dashboard/serve unit,
+ *  not the messaging gateway. The response lands before the unit stops, so a caller should expect
+ *  the socket to go away right after `ok`; the backend refuses (409/403) when it is not
+ *  service-managed or the dashboard user has no passwordless sudo for the unit. */
+export function restartBackend(): Promise<BackendRestartResponse> {
+  return hermesApi<BackendRestartResponse>({
+    ...profileScoped(),
+    path: '/api/backend/restart',
     method: 'POST'
   })
 }

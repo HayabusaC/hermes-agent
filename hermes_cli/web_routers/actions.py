@@ -7,6 +7,7 @@ Extracted from ``hermes_cli.web_server``; helpers/state that tests monkeypatch o
 import asyncio
 import contextlib
 import logging
+import os
 import re
 import secrets
 import subprocess
@@ -164,6 +165,57 @@ async def restart_gateway(profile: Optional[str] = None):
     with http_failure("Failed to spawn gateway restart", 500, "Failed to restart gateway"):
         proc, _reused = _spawn_gateway_restart(profile, interrupt=True)
     return {"ok": True, "pid": proc.pid, "name": "gateway-restart"}
+
+
+def _backend_systemd_unit() -> Optional[str]:
+    """The systemd unit this backend process runs under, else ``None`` (a hand-started process).
+
+    Read from the process's own cgroup: ``/system.slice/hermes-dashboard.service`` for the system
+    unit, ``.../hermes-serve.service`` for a headless one. A backend started from a shell has no
+    unit, and then there is nothing for systemd to restart.
+    """
+    try:
+        text = Path("/proc/self/cgroup").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        for part in line.strip().split("/"):
+            if part.endswith(".service"):
+                return part
+    return None
+
+
+@router.post("/api/backend/restart")
+async def restart_backend():
+    """Restart the service-managed backend that serves this dashboard.
+
+    The restart is asked for by a detached child and this response is written first: the unit's
+    stop phase takes this very process down, so anything awaited after the request would never
+    arrive. Refused honestly when the process is not service-managed (nothing can restart it) or
+    when the dashboard user has no passwordless sudo for the unit — reporting a restart that
+    cannot happen is worse than a 4xx the client can show.
+    """
+    unit = _backend_systemd_unit() if os.environ.get("INVOCATION_ID") else None
+    if not unit:
+        raise HTTPException(status_code=409, detail={
+            "error": "backend_not_managed",
+            "detail": "This backend is not run by a service manager; restart the process or app instead.",
+        })
+    from hermes_cli.update_cmd_fleet import _sudo_noninteractive_ok
+
+    command = ["sudo", "-n", "systemctl", "restart", unit]
+    if not _sudo_noninteractive_ok(["-l", "--", "systemctl", "restart", unit]):
+        raise HTTPException(status_code=403, detail={
+            "error": "backend_restart_needs_root",
+            "detail": f"Restarting {unit} needs root; grant the dashboard user NOPASSWD sudo for "
+                      f"'systemctl restart {unit}' or run it on the host.",
+        })
+    with http_failure("Failed to spawn backend restart", 500, "Failed to restart backend"):
+        proc = subprocess.Popen(
+            command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    return {"ok": True, "pid": proc.pid, "unit": unit}
 
 
 @router.get("/api/gateway/migrate/plan")

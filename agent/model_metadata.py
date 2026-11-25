@@ -1667,14 +1667,18 @@ _CODEX_OAUTH_CONTEXT_FALLBACK: dict[str, int] = {
     "gpt-5.6-sol": 272_000, "gpt-5.6-terra": 272_000, "gpt-5.6-luna": 272_000, "gpt-daybreak-blue-latest": 272_000,
     "gpt-5.5": 272_000, "gpt-5.4": 272_000, "gpt-5.2": 272_000, "gpt-5": 272_000,
 }
-# Codex OAuth advertises 272K for these families but ACCEPTS ~900K+ (verified live; gpt-5.5 and
-# gpt-5.4-mini genuinely reject >272K). 900K keeps ≥11K margin. OPT-IN ONLY via explicit ``-900k``
-# picker variants (a 900K default burned subscription usage); the suffix is stripped before the wire.
-# The bump fires ONLY when the resolved value is exactly the stale 272,000. ``gpt-5.6`` and the gpt-6
+# Codex OAuth advertises 272K (500K for the 6.1/6.2 tiers) for these families but ACCEPTS ~900K+
+# (verified live; gpt-5.5 and gpt-5.4-mini genuinely reject >272K). 900K keeps ≥11K margin. OPT-IN
+# ONLY via explicit ``-900k`` picker variants (a 900K default burned subscription usage); the suffix
+# is stripped before the wire. The bump RAISES ONLY: a live-verified cap above whatever the catalog
+# (or the fallback table) advertises wins, because that advertisement is itself an under-report —
+# gpt-6.2-sol advertises 500K yet accepted 913,594 input tokens (2026-11-24). A larger advertised
+# value is never lowered. ``gpt-5.6`` and the gpt-6
 # tiers are FAMILY PREFIXES so dated snapshots (``gpt-6-sol-2026-09-22``) inherit the bump (``-pro`` slugs
 # aren't routable on Codex); ``gpt-5.4`` is EXACT because gpt-5.4-mini enforces 272K. The gpt-6 tiers
 # carry the 5.6 verdict forward: they replace Sol/Terra/Luna on the same Codex route, and the live
-# catalog's ``max_context_window`` still caps the bump (#105443) if it publishes a lower ceiling.
+# catalog's ``max_context_window`` still caps the bump (#105443) — it currently publishes 872,000 for
+# every slug, so ``-900k`` variants resolve to 872K, not 900K.
 _CODEX_OAUTH_VERIFIED_ABOVE_ADVERTISED_PREFIXES: dict[str, int] = {
     "gpt-5.6": 900_000, "gpt-6-sol": 900_000, "gpt-6-luna": 900_000,
 }
@@ -1685,13 +1689,21 @@ _CODEX_OAUTH_VERIFIED_ABOVE_ADVERTISED_EXACT: dict[str, int] = {
     # the model page's 1.05M context minus 128K max output (derived, not a published input cap).
     # EXACT, not a prefix: the dotted slug is its own line and ``-pro`` is not routable.
     "gpt-6.1-sol": 900_000,
+    # GPT-6.2 (272K astra / 500K sol) and 6.1-terra (500K): each accepted 913,594 input tokens with a
+    # 16-token output cap (live 2026-11-24, usage.input_tokens on chatgpt.com/backend-api/codex).
+    "gpt-6.2-sol": 900_000, "gpt-6.2-astra": 900_000, "gpt-6.1-terra": 900_000,
 }
-_CODEX_OAUTH_STALE_ADVERTISED_CTX = 272_000  # the only advertised value the bump may override
+# Historical: the value the bump used to be gated on. Kept for callers/tests that compare against it;
+# eligibility is now raise-only, so a stale 272K is no longer the only advertisement the bump may lift.
+_CODEX_OAUTH_STALE_ADVERTISED_CTX = 272_000
 CODEX_CONTEXT_VARIANT_SUFFIX = "-900k"  # picker-only opt-in suffix; never sent on the wire
 # The ONLY bases eligible for ``-900k``: routable, live-verified. No family prefixing (it would synthesize
 # dead ``-pro`` variants); dated snapshots of the 5.6 / gpt-6 tier bases are allowed. gpt-daybreak-blue-latest is a verified Sol alias.
 _CODEX_900K_SNAPSHOT_BASES = ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna")
-_CODEX_900K_ELIGIBLE_BASES = frozenset({*_CODEX_900K_SNAPSHOT_BASES, "gpt-5.4", "gpt-daybreak-blue-latest", "gpt-6-astra", "gpt-6.1-sol"})
+_CODEX_900K_ELIGIBLE_BASES = frozenset({
+    *_CODEX_900K_SNAPSHOT_BASES, "gpt-5.4", "gpt-daybreak-blue-latest", "gpt-6-astra", "gpt-6.1-sol",
+    "gpt-6.1-terra", "gpt-6.2-sol", "gpt-6.2-astra",
+})
 _CODEX_900K_SNAPSHOT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
@@ -1906,13 +1918,18 @@ def _resolve_codex_oauth_context_length_with_source(model: str, access_token: st
     if not model_bare:
         return None, ""
     def _apply_verified_bump(ctx: int, source: str, catalog_max: Optional[int] = None) -> tuple[int, str]:
-        """Lift an EXACT stale 272K advertisement to the verified cap for opted-in ``-900k`` variants only,
-        never above the catalog's own ``max_context_window`` when it publishes one (#105443)."""
+        """RAISE an under-reported advertisement to the live-verified cap for opted-in ``-900k``
+        variants only, never above the catalog's own ``max_context_window`` when it publishes one
+        (#105443). Raise-only: a larger advertised value is served as advertised, and the bump never
+        lowers anything — the Codex advertisement has been repeatedly wrong in both directions
+        (272K and 500K lines that accept 913K+)."""
         bumped = _verified_codex_ctx_for_slug(model_bare)
-        if bumped is not None and ctx == _CODEX_OAUTH_STALE_ADVERTISED_CTX:
-            bumped = min(bumped, catalog_max) if catalog_max else bumped
-            logger.debug("Codex OAuth context for %s: advertised %d raised to live-verified %d", model_bare, ctx, bumped)
-            return bumped, source
+        if bumped is not None:
+            ceiling = min(bumped, catalog_max) if catalog_max else bumped
+            if ceiling > ctx:
+                logger.debug("Codex OAuth context for %s: advertised %d raised to live-verified %d",
+                             model_bare, ctx, ceiling)
+                return ceiling, source
         return ctx, source
     # The Codex catalog only knows the base slug (no -900k, no vendor/).
     # ``-900k`` variants are Hermes picker aliases — the Codex catalog only knows the base slug, so resolve

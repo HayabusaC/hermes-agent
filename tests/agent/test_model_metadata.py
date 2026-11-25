@@ -610,13 +610,18 @@ class TestCodexOAuthContextLength:
             )
         assert ctx == 272_000
 
-    def test_non_272k_advertisement_is_trusted_verbatim(self):
-        """Any advertised value other than the known-stale 272,000 — higher or
-        lower — is a real server-side change and must NOT be overridden, even
-        for an explicit ``-900k`` opt-in variant."""
-        from agent.model_metadata import get_model_context_length
+    def test_advertised_context_is_never_lowered_and_underreports_are_raised(self):
+        """The bump is raise-only: a larger advertised value is served as advertised (the server is
+        authoritative when it reports *more*), while an under-report — 372K, 200K, or the historical
+        272K stub — is lifted to the live-verified cap for an explicit ``-900k`` opt-in variant.
+        gpt-6.2-sol advertises 500K and still accepted 913,594 input tokens (live 2026-11-24), so the
+        advertisement is not trusted in the down direction."""
+        from agent.model_metadata import get_model_context_length, _verified_codex_ctx_for_slug
 
-        for advertised in (372_000, 200_000, 1_050_000):
+        verified = _verified_codex_ctx_for_slug("gpt-5.6-sol-900k")
+        assert verified
+        for advertised, expected in ((372_000, verified), (200_000, verified), (272_000, verified),
+                                     (1_050_000, 1_050_000)):
             fake_response = MagicMock()
             fake_response.status_code = 200
             fake_response.json.return_value = {
@@ -633,7 +638,7 @@ class TestCodexOAuthContextLength:
                     api_key=_codex_jwt("fake-token"),
                     provider="openai-codex",
                 )
-            assert ctx == advertised, f"advertised {advertised} must be trusted"
+            assert ctx == expected, f"advertised {advertised} resolved to {ctx}"
 
     @pytest.mark.parametrize("base", ["gpt-5.6-luna", "gpt-6.1-sol"])
     @pytest.mark.parametrize("catalog_max,expected", [(872_000, 872_000), (None, 900_000), (1_050_000, 900_000)])
@@ -794,6 +799,10 @@ class TestCodexOAuthContextLength:
         ("gpt-5.6-sol-2026-07-09-900k",   True,  900_000, "gpt-5.6-sol-2026-07-09"),
         # vendor-namespaced variant (display/aux callers) resolves too
         ("openai/gpt-5.6-sol-900k",       True,  900_000, "openai/gpt-5.6-sol"),
+        # GPT-6.2 / 6.1-Terra: verified live 2026-11-24 (913,594 input tokens accepted each)
+        ("gpt-6.2-sol-900k",              True,  900_000, "gpt-6.2-sol"),
+        ("gpt-6.2-astra-900k",            True,  900_000, "gpt-6.2-astra"),
+        ("gpt-6.1-terra-900k",            True,  900_000, "gpt-6.1-terra"),
         # -pro slugs are not routable on Codex OAuth: never a valid variant,
         # never stripped (fails honestly at the API instead)
         ("gpt-5.6-sol-pro-900k",          False, 272_000, "gpt-5.6-sol-pro-900k"),

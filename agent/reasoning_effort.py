@@ -118,6 +118,8 @@ def is_astra_model(model: Optional[str]) -> bool:
 def codex_supported_efforts(model: Optional[str]) -> tuple[str, ...]:
     """Supported effort set for an OpenAI/Codex Responses model."""
     bare = (model or "").strip().lower().rsplit("/", 1)[-1]
+    # ``-900k`` is a Hermes picker alias and never reaches the wire: the base slug owns the contract.
+    bare = bare.removesuffix("-900k")
     if is_astra_model(model) or bare in GPT62_MODEL_IDS or bare.startswith(NO_DISABLE_TIER_PREFIXES):
         return CODEX_ASTRA_EFFORTS
     return (

@@ -603,7 +603,8 @@ describe('primary failure foreground isolation', () => {
           completedAt: null,
           setupChoice: null,
           unsupportedPlatform: null,
-          bundled: false
+          bundled: false,
+          remoteOnly: false
         })),
         getConnectionConfig: vi.fn(async () => ({ mode: 'cloud', remoteAuthMode: 'oauth', remoteUrl: cloud.baseUrl })),
         getConnectionFor: vi.fn(async () => ({

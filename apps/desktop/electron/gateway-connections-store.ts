@@ -54,10 +54,24 @@ import {
   type RegistryConnection,
   uniqueLabel
 } from './connection-registry'
+import { INSTALL_STAMP } from './install-stamp'
+import { isLightPayload } from './light-remote-only'
 import type { NativeTokenSet } from './native-oauth'
 import type { NativeTokenStoreIo } from './native-token-store'
 
 export const GATEWAY_CONNECTIONS_FILE = 'gateway-connections.json'
+
+/**
+ * A light (remote-only) artifact has no local runtime, so the registry it reads
+ * and writes carries no This device entry and a primary that can never name it.
+ * Pinned per process: the artifact kind cannot change while the app runs.
+ */
+const REGISTRY_REMOTE_ONLY = isLightPayload(INSTALL_STAMP?.payload)
+
+function normalizeStoreRegistry(raw: unknown): ConnectionRegistry {
+  return normalizeRegistry(raw, { remoteOnly: REGISTRY_REMOTE_ONLY })
+}
+
 export const GATEWAY_CONNECTION_TOKENS_FILE = 'gateway-connection-tokens.json'
 const LOCK_WAIT_MS = 3000
 const LOCK_STALE_MS = 10_000
@@ -390,7 +404,7 @@ export function mergeRegistries(store: ConnectionRegistry, incoming: ConnectionR
   const primary = store.primary === LOCAL_CONNECTION_ID ? mapId(incoming.primary) : store.primary
   const lastUsed = store.lastUsed === store.primary ? mapId(incoming.lastUsed) : store.lastUsed
 
-  return normalizeRegistry({
+  return normalizeStoreRegistry({
     ...store,
     connections,
     primary,
@@ -427,7 +441,7 @@ export function rebaseRegistry(
   const pick = <K extends 'lastUsed' | 'launchMode' | 'primary' | 'quarantined'>(key: K) =>
     sameJson(base[key], next[key]) ? disk[key] : next[key]
 
-  return normalizeRegistry({
+  return normalizeStoreRegistry({
     ...disk,
     connections,
     primary: pick('primary'),
@@ -611,7 +625,7 @@ export function readLegacyUserDataRegistry(
       log?.(`[connections] ${file} could not be parsed; it is left in place and imports nothing.`)
     }
 
-    registry = read.doc || read.corrupt ? normalizeRegistry(read.doc) : migrateV1ToRegistry(v1Config)
+    registry = read.doc || read.corrupt ? normalizeStoreRegistry(read.doc) : migrateV1ToRegistry(v1Config)
   } catch (error) {
     log?.(`[connections] ${(error as Error).message}; importing the v1 connection only.`)
     registry = migrateV1ToRegistry(v1Config)
@@ -718,11 +732,11 @@ export function createGatewayConnectionsStore(deps: GatewayConnectionsStoreDeps)
       const { corrupt, doc } = readDoc<StoreDoc>(file)
 
       if (doc?.importedFrom?.[userDataKey]) {
-        return remember(normalizeRegistry(doc), revisionOf(doc))
+        return remember(normalizeStoreRegistry(doc), revisionOf(doc))
       }
 
-      const current = doc ? normalizeRegistry(doc) : null
-      const merged = current ? mergeRegistries(current, legacy) : normalizeRegistry(legacy)
+      const current = doc ? normalizeStoreRegistry(doc) : null
+      const merged = current ? mergeRegistries(current, legacy) : normalizeStoreRegistry(legacy)
       const quarantinedOverflow = current ? quarantineOverflow(current, legacy) : []
 
       const tokens = withStoreLockSync(tokensFile, tokensOurs => {
@@ -757,7 +771,7 @@ export function createGatewayConnectionsStore(deps: GatewayConnectionsStoreDeps)
       return importUserData()
     }
 
-    return remember(normalizeRegistry(doc), revisionOf(doc))
+    return remember(normalizeStoreRegistry(doc), revisionOf(doc))
   }
 
   function read(): ConnectionRegistry {
@@ -770,7 +784,7 @@ export function createGatewayConnectionsStore(deps: GatewayConnectionsStoreDeps)
     } catch (error) {
       deps.log?.(`[connections] ${(error as Error).message}; keeping the last known list`)
 
-      return cache || normalizeRegistry(null)
+      return cache || normalizeStoreRegistry(null)
     }
   }
 
@@ -781,9 +795,9 @@ export function createGatewayConnectionsStore(deps: GatewayConnectionsStoreDeps)
 
     withStoreLockSync(file, stillOurs => {
       const { corrupt, doc } = readDoc<StoreDoc>(file)
-      const disk = normalizeRegistry(doc)
+      const disk = normalizeStoreRegistry(doc)
       const moved = revisionOf(doc) !== baseRevision && base
-      const next = moved ? rebaseRegistry(base, plain, disk) : normalizeRegistry(plain)
+      const next = moved ? rebaseRegistry(base, plain, disk) : normalizeStoreRegistry(plain)
 
       const stored = land(doc, corrupt, stillOurs, next)
       dropTokens(signedInIdsGone(disk, stored))

@@ -18,6 +18,7 @@ function bootstrapState(overrides: Partial<DesktopBootstrapState> = {}): Desktop
     setupChoice: null,
     unsupportedPlatform: null,
     bundled: false,
+    remoteOnly: false,
     ...overrides
   }
 }
@@ -112,6 +113,33 @@ describe('DesktopInstallOverlay first-run setup', () => {
     expect(screen.getByText(/Will install to/i)).toBeTruthy()
     expect(screen.queryByText(/steps complete/i)).toBeNull()
     expect(screen.queryByText(/Fetching installer manifest/i)).toBeNull()
+  })
+
+  it('a remote-only artifact (Hermes Light) opens the remote form and never offers a local install', async () => {
+    // The light payload ships no runtime: the first-run surface must be the
+    // remote connect form alone — no local card, no installer, no back affordance.
+    installDesktopMock(
+      bootstrapState({
+        remoteOnly: true,
+        setupChoice: {
+          platform: 'win32',
+          activeRoot: 'C:\\Users\\me\\AppData\\Local\\hermes\\hermes-agent',
+          local: 'none',
+          bundled: false,
+          remoteOnly: true
+        }
+      })
+    )
+
+    render(<DesktopInstallOverlay />)
+
+    // The remote form is the whole surface: its field label paints, the choice
+    // card (and its Install button) never does, and there is no back button.
+    expect(await screen.findByText('Gateway URL')).toBeTruthy()
+    expect(screen.queryByText('Set up Hermes Desktop')).toBeNull()
+    expect(screen.queryByText('Install Hermes locally')).toBeNull()
+    expect(screen.queryByText(/Will install to/i)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Back' })).toBeNull()
   })
 
   it('continues local bootstrap only when Install Hermes locally is selected', async () => {

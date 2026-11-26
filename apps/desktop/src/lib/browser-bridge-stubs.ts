@@ -21,6 +21,7 @@ function readyBootstrapState(): DesktopBootstrapState {
     active: false,
     // A browser host never runs an in-app bundled payload.
     bundled: false,
+    remoteOnly: false,
     completedAt: Date.now(),
     error: null,
     log: [],

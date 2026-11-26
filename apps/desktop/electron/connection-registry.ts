@@ -1251,8 +1251,15 @@ function localEntry(label = 'This device'): RegistryConnection {
  * drop), primary always pointing at an existing entry. A hand-edited or
  * corrupt file degrades to a minimal local-only registry rather than
  * throwing at boot.
+ *
+ * `remoteOnly` is a light artifact: it owns no local runtime, so the local
+ * entry is neither kept nor minted and `primary` can never name it. Surviving
+ * remote entries stay as they are.
  */
-export function normalizeRegistry(raw: unknown): ConnectionRegistry {
+export function normalizeRegistry(
+  raw: unknown,
+  { remoteOnly = false }: { remoteOnly?: boolean } = {}
+): ConnectionRegistry {
   const parsed = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
   const rawConnections = Array.isArray(parsed.connections) ? parsed.connections : []
   const seenLabels = new Set<string>()
@@ -1400,12 +1407,26 @@ export function normalizeRegistry(raw: unknown): ConnectionRegistry {
     }
   }
 
-  if (!connections.some(c => c.kind === 'local')) {
+  if (remoteOnly) {
+    // A light artifact cannot serve This device: drop the entry a full install
+    // wrote, so no surface offers a backend that can never start.
+    for (let i = connections.length - 1; i >= 0; i -= 1) {
+      if (connections[i].kind === 'local') {
+        connections.splice(i, 1)
+      }
+    }
+  } else if (!connections.some(c => c.kind === 'local')) {
     connections.unshift(localEntry())
   }
 
   const storedPrimary = String(parsed.primary || '').trim()
-  const primary = connections.some(c => c.id === storedPrimary) ? storedPrimary : LOCAL_CONNECTION_ID
+
+  const primary = connections.some(c => c.id === storedPrimary)
+    ? storedPrimary
+    : remoteOnly
+      ? ''
+      : LOCAL_CONNECTION_ID
+
   const storedLastUsed = String(parsed.lastUsed || '').trim()
 
   const normalized: ConnectionRegistry = {

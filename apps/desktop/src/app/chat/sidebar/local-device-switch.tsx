@@ -4,7 +4,7 @@ import { useRef, useState } from 'react'
 import { FirstRunRemoteSetup } from '@/components/remote-setup/first-run'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { useI18n } from '@/i18n'
-import { localBootstrapNeeded } from '@/lib/local-backend-probe'
+import { probeLocalBackend } from '@/lib/local-backend-probe'
 import { notifyError } from '@/store/notifications'
 
 export interface LocalDeviceTarget {
@@ -40,17 +40,27 @@ export function useLocalDeviceSwitch() {
       return false
     }
 
-    let bootstrapNeeded: boolean
+    let probe: Awaited<ReturnType<typeof probeLocalBackend>>
 
     try {
-      bootstrapNeeded = await localBootstrapNeeded()
+      probe = await probeLocalBackend()
     } catch (error) {
       notifyError(error, t.profiles.switchConnectionFailed(target.label))
 
       return false
     }
 
-    if (!bootstrapNeeded) {
+    // Hermes Light has no local runtime: This device can never serve, and there
+    // is no installer to offer. Land the click on the remote connect form (the
+    // same escape an install prompt offers) instead of a bootstrap that main
+    // will refuse.
+    if (probe.remoteOnly) {
+      setConnectOpen(true)
+
+      return false
+    }
+
+    if (!probe.bootstrapNeeded) {
       return true
     }
 

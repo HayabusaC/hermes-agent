@@ -756,7 +756,7 @@ declare global {
       onBootProgress: (callback: (payload: DesktopBootProgress) => void) => () => void
       getBootstrapState: () => Promise<DesktopBootstrapState>
       /** Resolve This device without starting an install. Missing on an older preload. */
-      probeLocalBackend?: () => Promise<{ bootstrapNeeded: boolean }>
+      probeLocalBackend?: () => Promise<{ bootstrapNeeded: boolean; remoteOnly?: boolean }>
       continueBootstrapLocal: () => Promise<{ ok: boolean }>
       recycleBackend?: (profile?: null | string) => Promise<{ ok: boolean }>
       resetBootstrap: () => Promise<{ ok: boolean }>
@@ -1675,6 +1675,8 @@ export interface DesktopBootstrapSetupChoice {
   local: 'none' | 'installed' | 'bundled'
   /** This artifact is a bundled install (payload ships in-app). */
   bundled: boolean
+  /** This artifact is light (remote-only): there is no local agent to install. */
+  remoteOnly?: boolean
 }
 
 export interface DesktopBootstrapState {
@@ -1689,6 +1691,8 @@ export interface DesktopBootstrapState {
   unsupportedPlatform: DesktopBootstrapUnsupportedPlatform | null
   /** This artifact is a bundled install (payload ships in-app). */
   bundled: boolean
+  /** This artifact is light (remote-only): no local runtime, no installer. */
+  remoteOnly: boolean
 }
 
 export type DesktopBootstrapEvent =
@@ -1700,6 +1704,7 @@ export type DesktopBootstrapEvent =
       activeRoot?: string
       local?: DesktopBootstrapSetupChoice['local']
       bundled?: boolean
+      remoteOnly?: boolean
     }
   | { type: 'manifest'; stages: DesktopBootstrapStageDescriptor[]; protocolVersion: number | null }
   | {

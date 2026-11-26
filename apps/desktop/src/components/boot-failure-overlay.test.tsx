@@ -45,7 +45,8 @@ function stubDesktop(config: Record<string, unknown>, overrides: Record<string, 
         completedAt: null,
         setupChoice: null,
         unsupportedPlatform: null,
-        bundled: false
+        bundled: false,
+        remoteOnly: false
       }),
       ...overrides
     }
@@ -378,7 +379,8 @@ describe('BootFailureOverlay', () => {
     completedAt: null,
     setupChoice: null,
     unsupportedPlatform: null,
-    bundled: true
+    bundled: true,
+    remoteOnly: false
   }
 
   it('offers "Reinstall the app" on a bundled install only when the payload itself is damaged', async () => {
@@ -420,6 +422,25 @@ describe('BootFailureOverlay', () => {
       await waitFor(() => expect(screen.queryByRole('button', { name: /repair install/i })).toBeNull())
       expect(screen.queryByRole('button', { name: /reinstall the app/i })).toBeNull()
       expect(screen.queryByText(/reinstall the app to restore/i)).toBeNull()
+    } finally {
+      restore()
+    }
+  })
+
+  it('a light (remote-only) artifact never offers Repair or Reinstall', async () => {
+    const remoteOnlyState = { ...bundledState, bundled: false, remoteOnly: true }
+    const restore = stubDesktop({ mode: 'local' }, { getBootstrapState: async () => remoteOnlyState })
+    $desktopBoot.set({ ...$desktopBoot.get(), error: 'listen EADDRINUSE: address already in use 127.0.0.1:8642' })
+
+    try {
+      render(<BootFailureOverlay />)
+
+      expect(await screen.findByRole('button', { name: /retry/i })).toBeTruthy()
+      // No local runtime means no installer: wait for the snapshot, then hold
+      // both local-repair actions absent and the repair hint silent.
+      await waitFor(() => expect(screen.queryByRole('button', { name: /repair install/i })).toBeNull())
+      expect(screen.queryByRole('button', { name: /reinstall the app/i })).toBeNull()
+      expect(screen.queryByText(/repair re-runs the installer/i)).toBeNull()
     } finally {
       restore()
     }

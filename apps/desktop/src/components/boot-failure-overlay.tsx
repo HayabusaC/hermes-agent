@@ -92,6 +92,9 @@ export function BootFailureOverlay() {
   // Read from the bootstrap state snapshot so Repair is never offered there;
   // "Reinstall the app" replaces it only when the payload itself is damaged.
   const [bundled, setBundled] = useState(false)
+  // A light (remote-only) artifact owns no local runtime, so there is no
+  // installer to repair with either — same treatment as a bundled payload.
+  const [remoteOnly, setRemoteOnly] = useState(false)
   // Swap the card body to the embedded Gateway settings panel in place of routing
   // to the full Settings page (keeps the user on the recovery surface, no z-index
   // juggling, no second connection form to maintain).
@@ -136,6 +139,7 @@ export function BootFailureOverlay() {
       .then(snapshot => {
         if (!cancelled && snapshot) {
           setBundled(snapshot.bundled)
+          setRemoteOnly(snapshot.remoteOnly === true)
         }
       })
       .catch(() => undefined)
@@ -379,6 +383,10 @@ export function BootFailureOverlay() {
     busy: 'local'
   }
 
+  // A light artifact has no local gateway to fall back to: the action would
+  // only re-target This device at a runtime that cannot exist.
+  const localFallbacks: RecoveryAction[] = remoteOnly ? [] : [localAction]
+
   let actions: RecoveryAction[]
   let hint: string
   // The electron boot path flags a Nous Cloud backend-down (502/503/504) with
@@ -397,7 +405,7 @@ export function BootFailureOverlay() {
         busy: 'signin'
       },
       { ...settingsAction, variant: 'secondary' },
-      localAction
+      ...localFallbacks
     ]
     hint = copy.remoteSignInHint(label)
   } else if (cloudDown) {
@@ -414,7 +422,7 @@ export function BootFailureOverlay() {
         onClick: () => openExternalLink('https://portal.nousresearch.com'),
         icon: <ExternalLink />
       },
-      localAction,
+      ...localFallbacks,
       { ...retryAction, variant: 'secondary' },
       {
         key: 'discord',
@@ -426,7 +434,7 @@ export function BootFailureOverlay() {
     ]
     hint = copy.cloudDownHint
   } else if (remoteFailure) {
-    actions = [settingsAction, { ...retryAction, variant: 'secondary' }, localAction]
+    actions = [settingsAction, { ...retryAction, variant: 'secondary' }, ...localFallbacks]
     hint = copy.remoteFailureHint
   } else {
     // Local failure: Use-local is redundant with Retry (both re-target local), so
@@ -445,7 +453,7 @@ export function BootFailureOverlay() {
           icon: <ExternalLink />,
           variant: 'secondary'
         }
-      : bundled
+      : bundled || remoteOnly
         ? null
         : {
             key: 'repair',
@@ -457,7 +465,7 @@ export function BootFailureOverlay() {
           }
 
     actions = [retryAction, ...(fixAction ? [fixAction] : []), { ...settingsAction, variant: 'ghost' }]
-    hint = damagedPayload ? copy.bundledReinstallHint : bundled ? '' : copy.repairHint
+    hint = damagedPayload ? copy.bundledReinstallHint : bundled || remoteOnly ? '' : copy.repairHint
   }
 
   if (view === 'connect') {

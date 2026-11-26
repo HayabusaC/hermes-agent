@@ -27,10 +27,18 @@ test.each(['bundled', 'bootstrap', 'light'] as const)(
   payload => {
     const artifact = stamp(payload)
     const state = { error: 'backend exited before setup', setupChoice: null }
-    expect(bootstrapSnapshot(state, artifact)).toEqual({ ...state, bundled: payload === 'bundled' })
+    // `remoteOnly` rides the same snapshot: a light artifact has no local
+    // runtime, so the renderer never paints an install or a repair.
+    expect(bootstrapSnapshot(state, artifact)).toEqual({
+      ...state,
+      bundled: payload === 'bundled',
+      remoteOnly: payload === 'light'
+    })
     expect(bootstrapSnapshot({ error: null, setupChoice: null }, artifact).bundled).toBe(payload === 'bundled')
     expect(state).not.toHaveProperty('bundled')
     expect(bootstrapSnapshot(state, null).bundled).toBe(false)
+    expect(bootstrapSnapshot(state, null).remoteOnly).toBe(false)
+    expect(bootstrapSnapshot(state, artifact).remoteOnly).toBe(payload === 'light')
     expect(bootstrapSnapshot({ ...state, bundled: payload !== 'bundled' }, artifact).bundled).toBe(
       payload === 'bundled'
     )

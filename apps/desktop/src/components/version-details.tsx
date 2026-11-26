@@ -140,7 +140,8 @@ export function VersionDetails({ version, channelAction }: { version: DesktopVer
           <dd className="break-all text-right">{runtime}</dd>
         </div>
       )}
-      {version.installId && (
+      {/* A light (remote-only) artifact owns no local install: no id, no root. */}
+      {version.installId && version.payload !== 'light' && (
         <div className="flex justify-between gap-4">
           <dt className="text-muted-foreground">{u.versionDetailsInstallId}</dt>
           <dd className="break-all text-right font-mono text-xs">

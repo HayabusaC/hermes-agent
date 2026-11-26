@@ -336,6 +336,12 @@ import { createKeepAwakeController } from './keep-awake-controller'
 import { launchBuildIdentity } from './launch-build-identity'
 import { applyLaunchProfileOverride, parseLaunchProfile } from './launch-profile'
 import { createLaunchedProfileHost } from './launched-profile-host'
+import {
+  isLightPayload,
+  LIGHT_REMOTE_ONLY_KIND,
+  LIGHT_REMOTE_ONLY_REASON,
+  refuseLocalRuntime
+} from './light-remote-only'
 import { fetchLinkTitle, resolveFaviconCached } from './link-metadata'
 import { CHROMIUM_LOG_FILENAME, enableLinuxCrashDiagnostics, linuxCrashDiagnostics } from './linux-crash-diagnostics'
 import {
@@ -2561,8 +2567,9 @@ function promptFirstRunSetupChoice(backend) {
     active: true,
     platform: backend.platform || process.platform,
     activeRoot: backend.activeRoot || ACTIVE_HERMES_ROOT,
-    local: backend.local || 'none',
-    bundled: installShape() === 'bundled'
+    local: isLightVariant() ? 'none' : backend.local || 'none',
+    bundled: installShape() === 'bundled',
+    remoteOnly: isLightVariant()
   })
 }
 
@@ -3694,9 +3701,10 @@ function resolveUpdaterChannelFromStamp(): string {
   return packagedReleaseChannel(INSTALL_STAMP) ?? 'stable'
 }
 
-/** True when this artifact is the light (remote-only) variant. */
+/** True when this artifact is the light (remote-only) variant: no agent runtime,
+ *  so no local backend can ever be resolved, spawned, installed or repaired. */
 function isLightVariant(): boolean {
-  return INSTALL_STAMP?.payload === 'light'
+  return isLightPayload(INSTALL_STAMP?.payload)
 }
 
 /** Invalidate connections and wait for every owned backend before the swap. */
@@ -4829,6 +4837,28 @@ function writeDefaultProjectDir(dir) {
 const installedRuntimeGate = createInstalledRuntimeGate(process.env, rememberLog)
 
 async function resolveHermesBackend(backendArgs: string[], progress?: typeof advanceBootProgress): Promise<ResolvedHermesBackend> {
+  // A light artifact ships no runtime, so EVERY local rung below (bundled
+  // payload, a dev checkout, $PATH `hermes`, the canonical install, a published
+  // user-bin launcher) is skipped: this client can never adopt a local agent
+  // that happens to be on the machine, and never offers to install one. Boot
+  // parks on the first-run gate, whose only answer is a remote backend.
+  if (isLightVariant()) {
+    rememberLog('[light] remote-only artifact: skipping every local backend rung')
+
+    return {
+      kind: LIGHT_REMOTE_ONLY_KIND,
+      label: 'Hermes Light is a remote-only client',
+      command: null,
+      args: backendArgs,
+      bootstrap: false,
+      env: {},
+      shell: false,
+      activeRoot: ACTIVE_HERMES_ROOT,
+      platform: process.platform,
+      local: 'none'
+    }
+  }
+
   const payload = await runnableBundledPayload(rememberLog, progress)
 
   if (payload) {
@@ -5039,6 +5069,14 @@ async function ensureRuntime(
   backend: ResolvedHermesBackend,
   assertStillOwned: () => void
 ): Promise<ResolvedHermesBackend> {
+  // Defense in depth: no IPC, stale renderer or retried boot may drive a local
+  // spawn/bootstrap on an artifact that has no runtime to spawn.
+  if (isLightVariant()) {
+    rememberLog(`[light] refused to start a local backend: ${LIGHT_REMOTE_ONLY_REASON}`)
+
+    throw new Error(LIGHT_REMOTE_ONLY_REASON)
+  }
+
   localBackendLifecycle.assertCanStart()
   assertStillOwned()
 
@@ -13919,6 +13957,15 @@ ipcMain.handle('hermes:bootstrap:reset', async () => {
   return { ok: true }
 })
 ipcMain.handle('hermes:bootstrap:repair', async (): Promise<{ ok: boolean; bundled?: boolean; error?: string }> => {
+  // A light artifact owns no local runtime: repairing means re-running an
+  // installer for a checkout the client must never create. Refuse like the
+  // bundled case, without touching bootstrapRepairRequested.
+  if (isLightVariant()) {
+    rememberLog('[light] repair refused; this artifact is remote-only')
+
+    return { ok: false, error: 'light-remote-only' }
+  }
+
   // A bundled install's payload is immutable and sealed at build time —
   // "repair" would re-run the installer against a separate
   // %LOCALAPPDATA%\hermes tree the app doesn't own. The only repair for a
@@ -13993,6 +14040,14 @@ registerUpdateHoldIpc(ipcMain, {
 })
 
 ipcMain.handle('hermes:bootstrap:continue-local', async () => {
+  // A light artifact has no runtime to install: a stale renderer, a replay or a
+  // crafted IPC payload must not start the installer here.
+  if (isLightVariant()) {
+    rememberLog('[light] refused a local install request; this artifact is remote-only')
+
+    return refuseLocalRuntime()
+  }
+
   rememberLog('[bootstrap] local install selected by renderer; continuing first-launch bootstrap')
   continueFirstRunLocalBootstrap()
 
@@ -14020,7 +14075,10 @@ ipcMain.handle('hermes:local-backend:probe', async () => {
   // or a click that has not confirmed the install.
   const backend = await resolveHermesBackend([])
 
-  return { bootstrapNeeded: backend?.kind === 'bootstrap-needed' }
+  return {
+    bootstrapNeeded: backend?.kind === 'bootstrap-needed',
+    remoteOnly: isLightVariant() || backend?.kind === LIGHT_REMOTE_ONLY_KIND
+  }
 })
 ipcMain.handle('hermes:connection-config:get', async (_event, profile) =>
   sanitizeDesktopConnectionConfig(readDesktopConnectionConfig(), profile)

@@ -1,3 +1,5 @@
+import { isFirstRunGateKind } from './light-remote-only'
+
 interface FirstRunSetupBackend {
   activeRoot?: string
   kind?: string
@@ -59,8 +61,10 @@ export function createFirstRunSetupGate({
     }
   }
 
+  // `bootstrap-needed` (install locally or connect a remote) and the light
+  // artifact's remote-only sentinel both park boot until the renderer answers.
   const shouldGate = (backend?: FirstRunSetupBackend | null) =>
-    Boolean(backend && backend.kind === 'bootstrap-needed' && !localBootstrapConfirmed)
+    Boolean(backend && isFirstRunGateKind(backend.kind) && !localBootstrapConfirmed)
 
   const wait = async (backend?: FirstRunSetupBackend | null) => {
     if (!shouldGate(backend)) {

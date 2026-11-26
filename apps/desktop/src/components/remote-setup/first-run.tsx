@@ -10,7 +10,8 @@ import { RemoteSetupFields } from './fields'
 import { useRemoteSetup } from './use-remote-setup'
 
 interface FirstRunRemoteSetupProps {
-  onBack: () => void
+  /** Absent on a light (remote-only) artifact: there is no local card behind it. */
+  onBack?: () => void
 }
 
 export function FirstRunRemoteSetup({ onBack }: FirstRunRemoteSetupProps): ReactElement {
@@ -30,7 +31,7 @@ export function FirstRunRemoteSetup({ onBack }: FirstRunRemoteSetupProps): React
 
     try {
       await window.hermesDesktop.applyConnectionConfig(setup.payload)
-      onBack()
+      onBack?.()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err || t.settings.gateway.applyFailed))
     } finally {
@@ -53,9 +54,14 @@ export function FirstRunRemoteSetup({ onBack }: FirstRunRemoteSetupProps): React
           {error ? <div className="mt-3 text-sm text-destructive">{error}</div> : null}
         </div>
         <div className="mt-7 flex flex-wrap items-center justify-between gap-3">
-          <Button disabled={applying} onClick={onBack} size="sm" variant="ghost">
-            {copy.backToSetup}
-          </Button>
+          {/* No back affordance on a remote-only artifact: nothing local behind it. */}
+          {onBack ? (
+            <Button disabled={applying} onClick={onBack} size="sm" variant="ghost">
+              {copy.backToSetup}
+            </Button>
+          ) : (
+            <span />
+          )}
           <div className="flex items-center gap-2">
             <Button
               disabled={setup.testing || applying || !setup.canTest}

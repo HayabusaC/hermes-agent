@@ -192,7 +192,8 @@ const EMPTY_STATE: DesktopBootstrapState = {
   completedAt: null,
   setupChoice: null,
   unsupportedPlatform: null,
-  bundled: false
+  bundled: false,
+  remoteOnly: false
 }
 
 function applyEvent(state: DesktopBootstrapState, ev: DesktopBootstrapEvent): DesktopBootstrapState {
@@ -212,11 +213,13 @@ function applyEvent(state: DesktopBootstrapState, ev: DesktopBootstrapEvent): De
             platform: ev.platform || state.setupChoice?.platform || 'unknown',
             activeRoot: ev.activeRoot || state.setupChoice?.activeRoot || '',
             local: ev.local || state.setupChoice?.local || 'none',
-            bundled: Boolean(ev.bundled)
+            bundled: Boolean(ev.bundled),
+            remoteOnly: Boolean(ev.remoteOnly)
           }
         : null,
       unsupportedPlatform: null,
-      bundled: Boolean(ev.bundled)
+      bundled: Boolean(ev.bundled),
+      remoteOnly: ev.remoteOnly === undefined ? state.remoteOnly : Boolean(ev.remoteOnly)
     }
   }
 
@@ -435,6 +438,13 @@ export function DesktopInstallOverlay({ enabled = true }: DesktopInstallOverlayP
 
   if (!shouldShow) {
     return null
+  }
+
+  // A light artifact has no local runtime: the first-run surface IS the remote
+  // connect form. There is no local card to go back to, so no back affordance —
+  // and no path from this overlay into the installer.
+  if (!state.error && (state.remoteOnly || state.setupChoice?.remoteOnly)) {
+    return <FirstRunRemoteSetup />
   }
 
   if (remoteOpen) {

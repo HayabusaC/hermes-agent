@@ -132,15 +132,40 @@ export function useSystemResourcesStatusbarItem(): StatusbarItem {
   const ramPercent =
     hardware?.ram_total_bytes && ramUsed != null ? Math.round((ramUsed / hardware.ram_total_bytes) * 100) : null
 
-  // Compact bar label: the numbers a local-inference user glances at.
+  const host = hardware?.host ?? null
+  const cpuPercent = host?.cpu_util_percent ?? null
+  const cpuTemp = host?.cpu_temp_c ?? null
+  const fanRpm = host?.fan_rpm ?? null
+
+  // Compact bar label: the numbers a local-inference user glances at, plus the
+  // physical machine's CPU / temperature / fan when the backend reports them
+  // (the host block; absent on older backends).
   // "GPU 34% · 18G/32G" with a GPU; "RAM 41G/256G" without.
-  const label = hardware
-    ? hasGpu
-      ? `GPU ${hardware.gpu_util_percent ?? 0}%${
-          hardware.vram_used_bytes != null ? ` · ${gb(hardware.vram_used_bytes)}/${gb(hardware.vram_total_bytes)}` : ''
-        }`
-      : `RAM ${gb(ramUsed)}/${gb(hardware.ram_total_bytes)}`
-    : copy.loading
+  const labelParts: string[] = []
+
+  if (hardware) {
+    labelParts.push(
+      hasGpu
+        ? `GPU ${hardware.gpu_util_percent ?? 0}%${
+            hardware.vram_used_bytes != null ? ` · ${gb(hardware.vram_used_bytes)}/${gb(hardware.vram_total_bytes)}` : ''
+          }`
+        : `RAM ${gb(ramUsed)}/${gb(hardware.ram_total_bytes)}`
+    )
+
+    if (cpuPercent != null) {
+      labelParts.push(`CPU ${Math.round(cpuPercent)}%`)
+    }
+
+    if (cpuTemp != null) {
+      labelParts.push(`${cpuTemp}°C`)
+    }
+
+    if (fanRpm != null) {
+      labelParts.push(`${fanRpm} rpm`)
+    }
+  }
+
+  const label = hardware ? labelParts.join(' · ') : copy.loading
 
   return {
     detail: undefined,
@@ -186,6 +211,20 @@ export function useSystemResourcesStatusbarItem(): StatusbarItem {
           percent={ramPercent}
           value={`${gbLong(ramUsed)} / ${gbLong(hardware?.ram_total_bytes)}`}
         />
+
+        {cpuPercent !== null && (
+          <MeterRow label={copy.cpu} percent={cpuPercent} value={`${Math.round(cpuPercent)}%`} />
+        )}
+
+        {host?.load1 != null && <MeterRow label={copy.load} percent={null} value={host.load1.toFixed(2)} />}
+
+        {host?.cpu_mhz != null && (
+          <MeterRow label={copy.clock} percent={null} value={`${(host.cpu_mhz / 1000).toFixed(2)} GHz`} />
+        )}
+
+        {cpuTemp !== null && <MeterRow label={copy.temperature} percent={null} value={`${cpuTemp} °C`} />}
+
+        {fanRpm !== null && <MeterRow label={copy.fan} percent={null} value={`${fanRpm} rpm`} />}
 
         {hardware?.uma && <p className="text-[0.6875rem] text-muted-foreground">{copy.unifiedNote}</p>}
       </div>

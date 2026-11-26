@@ -4077,6 +4077,11 @@ export const zhOverrides = {
         gpuUtilization: 'GPU 利用率',
         gpuMemory: '显存',
         ram: '内存',
+        cpu: '处理器',
+        load: '负载',
+        clock: '主频',
+        temperature: '温度',
+        fan: '风扇',
         unifiedNote: '统一内存——GPU 与系统共享此内存池。',
         toggle: '系统资源'
       },

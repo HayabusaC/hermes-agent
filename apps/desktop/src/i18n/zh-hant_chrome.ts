@@ -390,6 +390,11 @@ export const zhHantChrome = {
         gpuUtilization: 'GPU 使用率',
         gpuMemory: '顯示記憶體',
         ram: '記憶體',
+        cpu: '處理器',
+        load: '負載',
+        clock: '時脈',
+        temperature: '溫度',
+        fan: '風扇',
         unifiedNote: '統一記憶體——GPU 與系統共享此記憶體池。',
         toggle: '系統資源'
       },

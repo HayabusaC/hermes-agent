@@ -4676,6 +4676,11 @@ export const frOverrides = {
         gpuUtilization: 'Utilisation du GPU',
         gpuMemory: 'Mémoire GPU',
         ram: 'RAM',
+        cpu: 'CPU',
+        load: 'Charge',
+        clock: 'Fréquence',
+        temperature: 'Température',
+        fan: 'Ventilateur',
         unifiedNote: 'Mémoire unifiée — le GPU et le système partagent cet espace.',
         toggle: 'Ressources système'
       },

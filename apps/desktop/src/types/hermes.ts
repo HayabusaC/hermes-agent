@@ -1530,6 +1530,17 @@ export interface LocalModelsStatus {
   models_dir: string
 }
 
+export interface HostSensors {
+  cpu_util_percent: number | null
+  load1: number | null
+  cpu_mhz: number | null
+  cpu_temp_c: number | null
+  fan_rpm: number | null
+  cores: number | null
+  /** `host` = sampled from the physical machine behind the gateway, `local` = this process' own view. */
+  source?: 'host' | 'local'
+}
+
 export interface LocalHardware {
   uma: boolean
   vram_total_bytes: number
@@ -1540,6 +1551,8 @@ export interface LocalHardware {
   gpu_name: string | null
   gpu_util_percent: number | null
   vram_used_bytes: number | null
+  /** CPU / thermal / fan for the same readout; absent on backends that predate it. */
+  host?: HostSensors | null
 }
 
 export interface LocalCatalogModel {

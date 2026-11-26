@@ -3692,6 +3692,11 @@ export interface Translations extends NoticeTranslations {
         gpuUtilization: string
         gpuMemory: string
         ram: string
+        cpu: string
+        load: string
+        clock: string
+        temperature: string
+        fan: string
         unifiedNote: string
         toggle: string
       }

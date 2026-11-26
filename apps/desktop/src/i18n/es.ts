@@ -4652,6 +4652,11 @@ export const esOverrides = {
         gpuUtilization: 'Uso de GPU',
         gpuMemory: 'Memoria de GPU',
         ram: 'RAM',
+        cpu: 'CPU',
+        load: 'Carga',
+        clock: 'Frecuencia',
+        temperature: 'Temperatura',
+        fan: 'Ventilador',
         unifiedNote: 'Memoria unificada: la GPU y el sistema comparten este espacio.',
         toggle: 'Recursos del sistema'
       },

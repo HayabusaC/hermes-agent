@@ -29,7 +29,7 @@ from pydantic import BaseModel
 
 from starlette.concurrency import run_in_threadpool
 
-from hermes_cli import config as config_mod, web_deps
+from hermes_cli import config as config_mod, host_sensors, web_deps
 from hermes_cli.config_backend import CONFIG_MUTATION_LOCK
 from hermes_cli.web_routers._common import _config_profile_scope
 from hermes_cli.local_runtime import (
@@ -603,6 +603,9 @@ def local_models_hardware():
         "uma": budget.uma, "vram_total_bytes": budget.total_device_bytes, "vram_usable_bytes": budget.usable_vram_bytes,
         "ram_total_bytes": ram_total, "ram_available_bytes": ram_avail, "vram_label": _human_gb(budget.total_device_bytes),
         "gpu_name": None, "gpu_util_percent": None, "vram_used_bytes": None,
+        # CPU / thermal / fan for the same status-bar readout. A container sees only its own
+        # slice, so host_sensors prefers a sidecar drop file; every field may be None.
+        "host": _quiet(host_sensors.read_host_sensors, {}),
     }
     out.update(_quiet(_nvidia_smi_facts, {}))
     return out

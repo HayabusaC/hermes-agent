@@ -165,13 +165,16 @@ export function useSystemResourcesStatusbarItem(): StatusbarItem {
           )}
         </div>
 
-        {hasGpu && (
+        {/* Measured utilization only — no placeholder. An Intel iGPU here has no
+            perf access (perfmon_capable() resolves against the host's user
+            namespace, so perf_event_open is EPERM even for container root), and a
+            row that reads "—" every time is noise, not information. Where a
+            number exists (NVIDIA, or Intel with perf access) the row appears. */}
+        {hardware?.gpu_util_percent != null && (
           <MeterRow
             label={copy.gpuUtilization}
-            percent={hardware?.gpu_util_percent ?? null}
-            // An Intel iGPU without an RC6 counter knows its name but not its
-            // utilization: say so instead of printing a confident 0%.
-            value={hardware?.gpu_util_percent == null ? '—' : `${Math.round(hardware.gpu_util_percent)}%`}
+            percent={hardware.gpu_util_percent}
+            value={`${Math.round(hardware.gpu_util_percent)}%`}
           />
         )}
 

@@ -7,8 +7,8 @@ import { $statusbarHiddenIds, STATUSBAR_HIDDEN_BY_DEFAULT } from '@/store/status
 // The poll fires getLocalHardware() every 5s while the item is shown; the
 // backend spawns nvidia-smi per poll, so a hidden window must stop polling
 // entirely and resume on visibilitychange (#120262).
-const { getLocalHardware } = vi.hoisted(() => ({
-  getLocalHardware: vi.fn().mockResolvedValue({
+const { getLocalHardware, hardwareFixture } = vi.hoisted(() => {
+  const hardwareFixture = {
     gpu_name: 'NVIDIA Test GPU',
     gpu_util_percent: 10,
     // Plain multiplication, not `8 << 30`: a left shift is int32, so 8/16/32 GB
@@ -22,8 +22,10 @@ const { getLocalHardware } = vi.hoisted(() => ({
     gpu_mhz: 300,
     gpu_mhz_max: 950,
     uma: false
-  })
-}))
+  }
+
+  return { hardwareFixture, getLocalHardware: vi.fn().mockResolvedValue(hardwareFixture) }
+})
 
 vi.mock('@/hermes', () => ({ getLocalHardware }))
 
@@ -31,11 +33,24 @@ import { useSystemResourcesStatusbarItem } from './system-resources-statusbar'
 
 describe('system-resources statusbar polling', () => {
   afterEach(() => {
-    getLocalHardware.mockClear()
+    getLocalHardware.mockReset()
+    getLocalHardware.mockResolvedValue(hardwareFixture)
     vi.restoreAllMocks()
     $statusbarHiddenIds.set([...STATUSBAR_HIDDEN_BY_DEFAULT])
     $localModelsEnabled.set(true)
   })
+
+  // The menu is a snapshot of the item at read time: wait for the first poll to
+  // land (the outer label stops reading "Resources…") before taking it.
+  async function renderMenu() {
+    const { result } = await renderShown()
+
+    await waitFor(() => expect(result.current.label).toMatch(/^RAM /))
+
+    const content = result.current.menuContent
+
+    render(<div>{typeof content === 'function' ? content(() => {}) : content}</div>)
+  }
 
   async function renderShown() {
     $localModelsEnabled.set(true)
@@ -103,14 +118,30 @@ describe('system-resources statusbar polling', () => {
   })
 
   it('shows the GPU clock in the panel when the adapter reports one', async () => {
-    const { result } = await renderShown()
-
-    const content = result.current.menuContent
-
-    render(<div>{typeof content === 'function' ? content(() => {}) : content}</div>)
+    await renderMenu()
 
     expect(await screen.findByText('GPU clock')).toBeTruthy()
     expect(screen.getByText('300 / 950 MHz')).toBeTruthy()
+  })
+
+  it('paints GPU utilization only when the adapter measures it', async () => {
+    getLocalHardware.mockResolvedValue({ ...hardwareFixture, gpu_util_percent: 63 })
+
+    await renderMenu()
+
+    expect(await screen.findByText('GPU utilization')).toBeTruthy()
+    expect(screen.getByText('63%')).toBeTruthy()
+  })
+
+  it('omits the utilization row entirely when no counter is available', async () => {
+    // The Intel iGPU case: a named adapter and a clock, no perf access at all.
+    getLocalHardware.mockResolvedValue({ ...hardwareFixture, gpu_util_percent: null })
+
+    await renderMenu()
+
+    expect(await screen.findByText('GPU clock')).toBeTruthy()
+    expect(screen.queryByText('GPU utilization')).toBeNull()
+    expect(screen.queryByText('—')).toBeNull()
   })
 
   it('carries RAM usage alone in the outer label, whatever else the host reports', async () => {

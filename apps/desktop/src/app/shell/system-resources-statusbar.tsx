@@ -169,11 +169,16 @@ export function useSystemResourcesStatusbarItem(): StatusbarItem {
           <MeterRow
             label={copy.gpuUtilization}
             percent={hardware?.gpu_util_percent ?? null}
-            value={`${hardware?.gpu_util_percent ?? 0}%`}
+            // An Intel iGPU without an RC6 counter knows its name but not its
+            // utilization: say so instead of printing a confident 0%.
+            value={hardware?.gpu_util_percent == null ? '—' : `${Math.round(hardware.gpu_util_percent)}%`}
           />
         )}
 
-        {hasGpu && (
+        {/* Dedicated VRAM only. An Intel iGPU reports the adapter but no
+            per-adapter memory figure (it shares system RAM), so the row would
+            read "— / 16 GB" — the RAM row already tells that story. */}
+        {hasGpu && hardware?.vram_used_bytes != null && (
           <MeterRow
             label={copy.gpuMemory}
             percent={vramPercent}

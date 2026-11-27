@@ -166,6 +166,43 @@ def test_hardware_plain_facts(client):
     assert "gpu_name" in data and "gpu_util_percent" in data and "vram_used_bytes" in data
 
 
+def test_hardware_falls_back_to_intel_when_nvidia_is_absent(client, monkeypatch):
+    """A machine with an iGPU and no NVIDIA driver still names its adapter.
+
+    NVIDIA owns the tool-based path (nvidia-smi); Intel answers from sysfs. The
+    endpoint must ask the second one only when the first had nothing to say, or
+    a host with both would report the wrong adapter.
+    """
+    from hermes_cli.web_routers import local_models
+
+    monkeypatch.setattr(local_models, "_nvidia_smi_facts", dict)
+    monkeypatch.setattr(
+        local_models,
+        "_intel_gpu_facts",
+        lambda: {"gpu_name": "Kaby Lake-U GT3 [Iris Plus Graphics 640]", "gpu_util_percent": 12.0, "gpu_mhz": 300},
+    )
+
+    data = client.get("/api/local-models/hardware").json()
+
+    assert data["gpu_name"] == "Kaby Lake-U GT3 [Iris Plus Graphics 640]"
+    assert data["gpu_util_percent"] == 12.0
+
+
+def test_hardware_keeps_nvidia_when_both_answer(client, monkeypatch):
+    from hermes_cli.web_routers import local_models
+
+    monkeypatch.setattr(
+        local_models, "_nvidia_smi_facts", lambda: {"gpu_name": "NVIDIA RTX 4090", "gpu_util_percent": 63, "vram_used_bytes": 1}
+    )
+    monkeypatch.setattr(
+        local_models, "_intel_gpu_facts", lambda: {"gpu_name": "Intel iGPU", "gpu_util_percent": 3.0}
+    )
+
+    data = client.get("/api/local-models/hardware").json()
+
+    assert data["gpu_name"] == "NVIDIA RTX 4090"
+
+
 # ── catalog ──────────────────────────────────────────────────
 
 

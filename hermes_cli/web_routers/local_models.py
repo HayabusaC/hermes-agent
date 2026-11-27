@@ -34,7 +34,7 @@ from hermes_cli.config_backend import CONFIG_MUTATION_LOCK
 from hermes_cli.web_routers._common import _config_profile_scope
 from hermes_cli.local_runtime import (
     binaries, bootstrap, catalog, context_policy, estimator, growth, hardware, hf_browse,
-    load_progress, presets, supervisor,
+    intel_gpu, load_progress, presets, supervisor,
 )
 from agent.memory_provider import spawn_context_thread
 from pm.downloader import Download, DownloadPaused, Source
@@ -579,6 +579,15 @@ def local_models_status():
 
 
 # ── hardware: what this machine can do ───────────────────────
+def _intel_gpu_facts() -> dict:
+    """Intel identity + utilization from sysfs (RC6 residency); {} on any other vendor.
+
+    Kept separate from the NVIDIA path because the two have nothing in common: one
+    spawns nvidia-smi, this one reads /sys. See local_runtime/intel_gpu.py for why
+    utilization is derived rather than measured per engine."""
+    return intel_gpu.facts()
+
+
 def _nvidia_smi_facts() -> dict:
     """GPU identity + live utilization (NVIDIA only; other vendors degrade to {} and the UI hides those readouts).
 
@@ -608,6 +617,10 @@ def local_models_hardware():
         "host": _quiet(host_sensors.read_host_sensors, {}),
     }
     out.update(_quiet(_nvidia_smi_facts, {}))
+    if not out.get("gpu_name"):
+        # No NVIDIA driver here: an Intel iGPU still has a name and a utilization
+        # to show, read from sysfs instead of a vendor tool.
+        out.update(_quiet(_intel_gpu_facts, {}, debug="intel GPU facts unavailable"))
     return out
 
 

@@ -389,6 +389,7 @@ export const zhHantChrome = {
         loading: '資源…',
         gpuUtilization: 'GPU 使用率',
         gpuMemory: '顯示記憶體',
+        gpuClock: 'GPU 主頻',
         ram: '記憶體',
         cpu: '處理器',
         load: '負載',

@@ -3705,6 +3705,7 @@ export interface Translations extends NoticeTranslations {
         loading: string
         gpuUtilization: string
         gpuMemory: string
+        gpuClock: string
         ram: string
         cpu: string
         load: string

@@ -4689,6 +4689,7 @@ export const frOverrides = {
         loading: 'Ressources…',
         gpuUtilization: 'Utilisation du GPU',
         gpuMemory: 'Mémoire GPU',
+        gpuClock: 'Fréquence GPU',
         ram: 'RAM',
         cpu: 'CPU',
         load: 'Charge',

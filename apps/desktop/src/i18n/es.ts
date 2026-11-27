@@ -4665,6 +4665,7 @@ export const esOverrides = {
         loading: 'Recursos…',
         gpuUtilization: 'Uso de GPU',
         gpuMemory: 'Memoria de GPU',
+        gpuClock: 'Frecuencia de GPU',
         ram: 'RAM',
         cpu: 'CPU',
         load: 'Carga',

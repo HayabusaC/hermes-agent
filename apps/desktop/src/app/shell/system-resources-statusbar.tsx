@@ -198,6 +198,20 @@ export function useSystemResourcesStatusbarItem(): StatusbarItem {
 
         {host?.load1 != null && <MeterRow label={copy.load} percent={null} value={host.load1.toFixed(2)} />}
 
+        {/* A GPU whose utilization cannot be measured (Intel iGPU without perf
+            access) still reports its clock, which is the useful next fact. */}
+        {hardware?.gpu_mhz != null && (
+          <MeterRow
+            label={copy.gpuClock}
+            percent={null}
+            value={
+              hardware.gpu_mhz_max != null && hardware.gpu_mhz_max !== hardware.gpu_mhz
+                ? `${hardware.gpu_mhz} / ${hardware.gpu_mhz_max} MHz`
+                : `${hardware.gpu_mhz} MHz`
+            }
+          />
+        )}
+
         {host?.cpu_mhz != null && (
           <MeterRow label={copy.clock} percent={null} value={`${(host.cpu_mhz / 1000).toFixed(2)} GHz`} />
         )}

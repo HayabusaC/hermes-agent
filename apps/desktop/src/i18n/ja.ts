@@ -3080,6 +3080,7 @@ export const jaOverrides = {
         loading: 'リソース…',
         gpuUtilization: 'GPU 使用率',
         gpuMemory: 'GPU メモリ',
+        gpuClock: 'GPU クロック',
         ram: 'RAM',
         cpu: 'CPU',
         load: '負荷',

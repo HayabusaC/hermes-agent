@@ -4246,6 +4246,7 @@ export const en: Translations = {
         loading: 'Resources…',
         gpuUtilization: 'GPU utilization',
         gpuMemory: 'GPU memory',
+        gpuClock: 'GPU clock',
         ram: 'RAM',
         cpu: 'CPU',
         load: 'Load',

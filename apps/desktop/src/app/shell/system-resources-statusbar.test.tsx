@@ -1,4 +1,4 @@
-import { act, renderHook, waitFor } from '@testing-library/react'
+import { act, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { $localModelsEnabled } from '@/store/local-models-flag'
@@ -18,6 +18,9 @@ const { getLocalHardware } = vi.hoisted(() => ({
     vram_usable_bytes: 6 * 2 ** 30,
     ram_total_bytes: 32 * 2 ** 30,
     ram_available_bytes: 16 * 2 ** 30,
+    // Intel path: utilization may be unknown, the clock usually is not.
+    gpu_mhz: 300,
+    gpu_mhz_max: 950,
     uma: false
   })
 }))
@@ -97,6 +100,17 @@ describe('system-resources statusbar polling', () => {
     })
 
     expect(getLocalHardware).not.toHaveBeenCalled()
+  })
+
+  it('shows the GPU clock in the panel when the adapter reports one', async () => {
+    const { result } = await renderShown()
+
+    const content = result.current.menuContent
+
+    render(<div>{typeof content === 'function' ? content(() => {}) : content}</div>)
+
+    expect(await screen.findByText('GPU clock')).toBeTruthy()
+    expect(screen.getByText('300 / 950 MHz')).toBeTruthy()
   })
 
   it('carries RAM usage alone in the outer label, whatever else the host reports', async () => {

@@ -1577,6 +1577,10 @@ export interface LocalHardware {
   vram_label: string
   gpu_name: string | null
   gpu_util_percent: number | null
+  /** Current / maximum GT clock in MHz. Intel reads it from sysfs; NVIDIA does
+   *  not publish it through this payload yet, so both stay undefined there. */
+  gpu_mhz?: number | null
+  gpu_mhz_max?: number | null
   vram_used_bytes: number | null
   /** CPU / thermal / fan for the same readout; absent on backends that predate it. */
   host?: HostSensors | null

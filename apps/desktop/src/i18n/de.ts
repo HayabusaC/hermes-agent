@@ -4680,6 +4680,7 @@ export const deOverrides = {
         loading: 'Ressourcen…',
         gpuUtilization: 'GPU-Auslastung',
         gpuMemory: 'GPU-Speicher',
+        gpuClock: 'GPU-Takt',
         ram: 'RAM',
         cpu: 'CPU',
         load: 'Last',

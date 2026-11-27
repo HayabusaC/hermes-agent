@@ -4090,6 +4090,7 @@ export const zhOverrides = {
         loading: '资源…',
         gpuUtilization: 'GPU 利用率',
         gpuMemory: '显存',
+        gpuClock: 'GPU 主频',
         ram: '内存',
         cpu: '处理器',
         load: '负载',

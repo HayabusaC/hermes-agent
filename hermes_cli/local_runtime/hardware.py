@@ -289,7 +289,7 @@ def _cached_nvidia_gpu_query(ttl_s: float = _GPU_QUERY_TTL_S) -> dict | None:
 
     from hermes_cli._subprocess_compat import windows_hide_flags
 
-    with suppress(OSError, ValueError, subprocess.TimeoutExpired):
+    with suppress(OSError, ValueError, StopIteration, subprocess.TimeoutExpired):
         # Column order is a contract with the parsers below and their tests:
         # total, free, name, pci id, used, util, clocks.current.graphics, clocks.max.graphics.
         out = subprocess.run(
@@ -310,8 +310,13 @@ def _cached_nvidia_gpu_query(ttl_s: float = _GPU_QUERY_TTL_S) -> dict | None:
         if out.returncode != 0 or not out.stdout.strip():
             _gpu_query_cache = (now, None)
             return None
+        row = next(csv.reader(out.stdout.strip().splitlines(), skipinitialspace=True))
+        # Older smi builds (and every test fake written before the clocks were
+        # asked for) return six columns; the tail is optional, the head is not.
+        if len(row) < 8:
+            row += [""] * (8 - len(row))
         total_mib, free_mib, name, raw_id, used_mib, util, clock_mhz, clock_max_mhz = (
-            next(csv.reader(out.stdout.strip().splitlines(), skipinitialspace=True))
+            row[:8]
         )
         pci_id = None
         with suppress(

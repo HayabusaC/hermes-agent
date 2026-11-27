@@ -89,8 +89,11 @@ def test_unavailable_pci_id_preserves_memory_and_name_fallback(monkeypatch, inte
 
     def run(argv, **kwargs):
         calls.append(argv)
-        assert argv[1] == "--query-gpu=memory.total,memory.free,name,pci.device_id,memory.used,utilization.gpu"
-        return SimpleNamespace(returncode=0, stdout=f"32704, 31423, {name}, N/A, 2048, 7\n")
+        assert argv[1] == (
+            "--query-gpu=memory.total,memory.free,name,pci.device_id,memory.used,utilization.gpu,"
+            "clocks.current.graphics,clocks.max.graphics"
+        )
+        return SimpleNamespace(returncode=0, stdout=f"32704, 31423, {name}, N/A, 2048, 7, 1095, 1965\n")
 
     monkeypatch.setattr(hardware.subprocess, "run", run)
     budget = hardware.probe_budget(planning=True)

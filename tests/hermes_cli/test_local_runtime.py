@@ -29,15 +29,20 @@ def _write_current_process_state(path: Path, *, base_url: str, api_key: str) -> 
     parent = proc.parent()
     assert parent is not None
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({
-        "base_url": base_url,
-        "api_key": api_key,
-        "pid": proc.pid,
-        "create_time": proc.create_time(),
-        "executable": proc.exe(),
-        "owner_pid": parent.pid,
-        "owner_create_time": parent.create_time(),
-    }), encoding="utf-8")
+    path.write_text(
+        json.dumps(
+            {
+                "base_url": base_url,
+                "api_key": api_key,
+                "pid": proc.pid,
+                "create_time": proc.create_time(),
+                "executable": proc.exe(),
+                "owner_pid": parent.pid,
+                "owner_create_time": parent.create_time(),
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 # ── stub llama-server ────────────────────────────────────────
@@ -99,8 +104,14 @@ class _StubHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if self.path == "/v1/chat/completions":
-            self._send(200, {"choices": [{"message": {
-                "role": "assistant", "content": self.chat_answer}}]})
+            self._send(
+                200,
+                {
+                    "choices": [
+                        {"message": {"role": "assistant", "content": self.chat_answer}}
+                    ]
+                },
+            )
         elif self.path == "/models/load":
             self._send(200, {"success": True})
         elif self.path == "/models/unload":
@@ -180,6 +191,7 @@ def test_probe_auth_required_still_detected(stub_server):
 def test_probe_dead_port_returns_none():
     # Bind-then-close to get a port that is definitely closed.
     import socket
+
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         dead_port = s.getsockname()[1]
@@ -189,26 +201,32 @@ def test_probe_dead_port_returns_none():
 # ── binary resolver (Rollout 2) ──────────────────────────────
 
 
-@pytest.mark.parametrize("vendor,os_name,expected", [
-    ("NVIDIA GeForce RTX 5090", "win", "cuda"),
-    ("nvidia", "ubuntu", "cuda"),
-    ("AMD Radeon RX 7900", "win", "vulkan"),
-    ("intel", "win", "vulkan"),
-    (None, "win", "cpu"),
-    ("", "ubuntu", "cpu"),
-    ("nvidia", "macos", "metal"),   # macOS is Metal regardless
-    (None, "macos", "metal"),
-])
+@pytest.mark.parametrize(
+    "vendor,os_name,expected",
+    [
+        ("NVIDIA GeForce RTX 5090", "win", "cuda"),
+        ("nvidia", "ubuntu", "cuda"),
+        ("AMD Radeon RX 7900", "win", "vulkan"),
+        ("intel", "win", "vulkan"),
+        (None, "win", "cpu"),
+        ("", "ubuntu", "cpu"),
+        ("nvidia", "macos", "metal"),  # macOS is Metal regardless
+        (None, "macos", "metal"),
+    ],
+)
 def test_backend_selection(vendor, os_name, expected):
     assert select_backend(vendor, os_name=os_name) == expected
 
 
-@pytest.mark.parametrize(("gpu_class", "expected"), [
-    ("intel", "intel"),
-    ("amd", "amd"),
-    ("none", None),
-    ("unknown", None),
-])
+@pytest.mark.parametrize(
+    ("gpu_class", "expected"),
+    [
+        ("intel", "intel"),
+        ("amd", "amd"),
+        ("none", None),
+        ("unknown", None),
+    ],
+)
 def test_auto_vendor_detection_uses_host_gpu_class(monkeypatch, gpu_class, expected):
     from hermes_cli.local_runtime import bootstrap, hardware
     from hermes_platform.host import facts
@@ -219,6 +237,57 @@ def test_auto_vendor_detection_uses_host_gpu_class(monkeypatch, gpu_class, expec
     assert bootstrap._detect_gpu_vendor() == expected
 
 
+def test_nvidia_query_reads_the_gpu_clock(monkeypatch):
+    """The status-bar clock row needs clocks.current/max.graphics from the same spawn."""
+    from types import SimpleNamespace
+
+    from hermes_cli.local_runtime import hardware
+
+    monkeypatch.setattr(hardware, "_gpu_query_cache", None)
+    monkeypatch.setattr(hardware, "_nvidia_smi_path", lambda: "nvidia-smi")
+    monkeypatch.setattr(
+        hardware.subprocess,
+        "run",
+        lambda argv, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout="8192, 4096, NVIDIA GeForce RTX 4060 Ti, 0x250410DE, 4096, 12, 240, 2535\n",
+        ),
+    )
+
+    query = hardware._cached_nvidia_gpu_query()
+
+    assert query is not None
+    assert query["gpu_mhz"] == 240
+    assert query["gpu_mhz_max"] == 2535
+
+
+@pytest.mark.parametrize("raw", ["N/A", "[N/A]", ""])
+def test_nvidia_query_tolerates_a_clock_it_cannot_read(monkeypatch, raw):
+    """A vGPU/MIG slice prints N/A; that must not cost the caller the whole reading."""
+    from types import SimpleNamespace
+
+    from hermes_cli.local_runtime import hardware
+
+    monkeypatch.setattr(hardware, "_gpu_query_cache", None)
+    monkeypatch.setattr(hardware, "_nvidia_smi_path", lambda: "nvidia-smi")
+    monkeypatch.setattr(
+        hardware.subprocess,
+        "run",
+        lambda argv, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=f"8192, 4096, NVIDIA A100, 0x20B010DE, 4096, 12, {raw}, {raw}\n",
+        ),
+    )
+
+    query = hardware._cached_nvidia_gpu_query()
+
+    assert query is not None
+    assert query["gpu_name"] == "NVIDIA A100"
+    assert query["gpu_util_percent"] == 12
+    assert query["gpu_mhz"] is None
+    assert query["gpu_mhz_max"] is None
+
+
 # ── supervisor contracts (stubbed; no GPU) ───────────────────
 
 
@@ -227,7 +296,8 @@ def _make_supervisor(tmp_path, port):
     from hermes_cli.local_runtime.supervisor import LlamaServerSupervisor
 
     sup = LlamaServerSupervisor(
-        binary=tmp_path / "llama-server", models_dir=tmp_path, port=port)
+        binary=tmp_path / "llama-server", models_dir=tmp_path, port=port
+    )
     return sup
 
 
@@ -248,9 +318,20 @@ def test_touch_generate_scans_reasoning_content(stub_server, tmp_path):
     class ReasoningHandler(handler):  # type: ignore[valid-type]
         def do_POST(self):
             if self.path == "/v1/chat/completions":
-                self._send(200, {"choices": [{"message": {
-                    "role": "assistant", "content": "",
-                    "reasoning_content": "The capital of France is Paris."}}]})
+                self._send(
+                    200,
+                    {
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "",
+                                    "reasoning_content": "The capital of France is Paris.",
+                                }
+                            }
+                        ]
+                    },
+                )
             else:
                 self._send(404, {})
 
@@ -307,7 +388,9 @@ def test_llamacpp_aliases_route_to_custom_profile():
         assert profile.env_vars == ()  # credential is reachability
 
 
-def test_llamacpp_endpoint_resolution_prefers_managed(tmp_path, monkeypatch, stub_server):
+def test_llamacpp_endpoint_resolution_prefers_managed(
+    tmp_path, monkeypatch, stub_server
+):
     """provider: llamacpp with a live managed server resolves to it,
     api-key included."""
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
@@ -316,9 +399,13 @@ def test_llamacpp_endpoint_resolution_prefers_managed(tmp_path, monkeypatch, stu
     from hermes_cli.local_runtime.supervisor import state_path
 
     _write_current_process_state(
-        state_path(), base_url=f"http://127.0.0.1:{port}/v1", api_key="sk-managed")
+        state_path(), base_url=f"http://127.0.0.1:{port}/v1", api_key="sk-managed"
+    )
     resolved = ep.resolve_llamacpp_endpoint()
-    assert resolved == {"base_url": f"http://127.0.0.1:{port}/v1", "api_key": "sk-managed"}
+    assert resolved == {
+        "base_url": f"http://127.0.0.1:{port}/v1",
+        "api_key": "sk-managed",
+    }
 
 
 def test_llamacpp_endpoint_stale_state_falls_through(tmp_path, monkeypatch):
@@ -335,13 +422,21 @@ def test_llamacpp_endpoint_stale_state_falls_through(tmp_path, monkeypatch):
     from hermes_cli.local_runtime.supervisor import state_path
 
     state_path().parent.mkdir(parents=True, exist_ok=True)
-    state_path().write_text(json.dumps({
-        "base_url": f"http://127.0.0.1:{dead_port}/v1", "api_key": "sk-x", "pid": 1,
-    }), encoding="utf-8")
+    state_path().write_text(
+        json.dumps(
+            {
+                "base_url": f"http://127.0.0.1:{dead_port}/v1",
+                "api_key": "sk-x",
+                "pid": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setattr(ep, "_pid_alive", lambda pid: False)
     # Keep detection away from any real server on 8080 during the test.
-    monkeypatch.setattr("hermes_cli.local_runtime.detect.DEFAULT_PROBE_PORTS",
-                        (dead_port,))
+    monkeypatch.setattr(
+        "hermes_cli.local_runtime.detect.DEFAULT_PROBE_PORTS", (dead_port,)
+    )
     assert ep.resolve_llamacpp_endpoint() is None
     assert DEFAULT_PROBE_PORTS  # (import kept honest)
 
@@ -360,26 +455,29 @@ def test_llamacpp_dead_server_raises_friendly_error(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         "hermes_cli.local_runtime.endpoint.resolve_llamacpp_endpoint",
-        lambda *a, **k: None)
+        lambda *a, **k: None,
+    )
 
     monkeypatch.setattr(
-        "hermes_cli.config.load_config",
-        lambda: {"local_runtime": {"enabled": False}})
+        "hermes_cli.config.load_config", lambda: {"local_runtime": {"enabled": False}}
+    )
     with pytest.raises(ValueError, match="turned off"):
         rp._resolve_named_custom_runtime(requested_provider="llamacpp")
 
     monkeypatch.setattr(
-        "hermes_cli.config.load_config",
-        lambda: {"local_runtime": {"enabled": True}})
+        "hermes_cli.config.load_config", lambda: {"local_runtime": {"enabled": True}}
+    )
     with pytest.raises(ValueError, match="isn't running"):
         rp._resolve_named_custom_runtime(requested_provider="llamacpp")
 
     # An explicit base_url is the user pointing at a specific server —
     # that path keeps its own error reporting, never this one.
     result = rp._resolve_named_custom_runtime(
-        requested_provider="llamacpp",
-        explicit_base_url="http://127.0.0.1:9999/v1")
-    assert result is None or result.get("base_url", "").startswith("http://127.0.0.1:9999")
+        requested_provider="llamacpp", explicit_base_url="http://127.0.0.1:9999/v1"
+    )
+    assert result is None or result.get("base_url", "").startswith(
+        "http://127.0.0.1:9999"
+    )
 
 
 def test_llamacpp_endpoint_starting_server_resolves(tmp_path, monkeypatch):
@@ -397,12 +495,20 @@ def test_llamacpp_endpoint_starting_server_resolves(tmp_path, monkeypatch):
     from hermes_cli.local_runtime.supervisor import state_path
 
     state_path().parent.mkdir(parents=True, exist_ok=True)
-    state_path().write_text(json.dumps({
-        "base_url": f"http://127.0.0.1:{not_listening}/v1",
-        "api_key": "sk-starting", "pid": 4242,
-    }), encoding="utf-8")
+    state_path().write_text(
+        json.dumps(
+            {
+                "base_url": f"http://127.0.0.1:{not_listening}/v1",
+                "api_key": "sk-starting",
+                "pid": 4242,
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setattr(
-        "hermes_cli.local_runtime.recovery.legacy_recorded_process", lambda state: object())
+        "hermes_cli.local_runtime.recovery.legacy_recorded_process",
+        lambda state: object(),
+    )
     resolved = ep.resolve_llamacpp_endpoint()
     assert resolved is not None
     assert resolved["api_key"] == "sk-starting"
@@ -424,17 +530,25 @@ def test_llamacpp_endpoint_waits_for_boot_in_flight(tmp_path, monkeypatch):
     # Boot is in flight: runtime enabled + binary installed.
     monkeypatch.setattr(ep, "_boot_in_flight", lambda config: True)
     monkeypatch.setattr(
-        "hermes_cli.local_runtime.recovery.legacy_recorded_process", lambda state: object())
+        "hermes_cli.local_runtime.recovery.legacy_recorded_process",
+        lambda state: object(),
+    )
     # Nothing detected externally.
     monkeypatch.setattr("hermes_cli.local_runtime.detect.DEFAULT_PROBE_PORTS", ())
 
     def _late_writer():
         _time.sleep(0.6)
         state_path().parent.mkdir(parents=True, exist_ok=True)
-        state_path().write_text(json.dumps({
-            "base_url": "http://127.0.0.1:59999/v1",
-            "api_key": "sk-boot", "pid": 777,
-        }), encoding="utf-8")
+        state_path().write_text(
+            json.dumps(
+                {
+                    "base_url": "http://127.0.0.1:59999/v1",
+                    "api_key": "sk-boot",
+                    "pid": 777,
+                }
+            ),
+            encoding="utf-8",
+        )
 
     t = threading.Thread(target=_late_writer)
     t.start()
@@ -463,16 +577,24 @@ def test_resolution_kicks_boot_when_no_thread_is_booting(tmp_path, monkeypatch):
 
     monkeypatch.setattr(ep, "_boot_in_flight", lambda config: True)
     monkeypatch.setattr(
-        "hermes_cli.local_runtime.recovery.legacy_recorded_process", lambda state: object())
+        "hermes_cli.local_runtime.recovery.legacy_recorded_process",
+        lambda state: object(),
+    )
     monkeypatch.setattr("hermes_cli.local_runtime.detect.DEFAULT_PROBE_PORTS", ())
 
     def _fake_ensure(config, force=False):
         _time.sleep(0.3)  # a real spawn takes a moment
         state_path().parent.mkdir(parents=True, exist_ok=True)
-        state_path().write_text(json.dumps({
-            "base_url": "http://127.0.0.1:59998/v1",
-            "api_key": "sk-kicked", "pid": 778,
-        }), encoding="utf-8")
+        state_path().write_text(
+            json.dumps(
+                {
+                    "base_url": "http://127.0.0.1:59998/v1",
+                    "api_key": "sk-kicked",
+                    "pid": 778,
+                }
+            ),
+            encoding="utf-8",
+        )
 
     monkeypatch.setattr(bs, "ensure_local_runtime", _fake_ensure)
 
@@ -488,9 +610,12 @@ def test_boot_in_flight_real_gate(tmp_path, monkeypatch):
     the CONFIGURED backend -> True; either missing -> False."""
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
     from hermes_cli.local_runtime import endpoint as ep
+
     installed: set[str] = set()
-    monkeypatch.setattr("hermes_cli.local_runtime.binaries.installed_engine",
-                        lambda backend="auto", **_: object() if backend in installed else None)
+    monkeypatch.setattr(
+        "hermes_cli.local_runtime.binaries.installed_engine",
+        lambda backend="auto", **_: object() if backend in installed else None,
+    )
 
     enabled = {"local_runtime": {"enabled": True}}
     assert ep._boot_in_flight(enabled) is False
@@ -501,7 +626,10 @@ def test_boot_in_flight_real_gate(tmp_path, monkeypatch):
     # An explicit backend is the engine that boots: only the Vulkan build installed must count.
     installed.clear()
     installed.add("vulkan")
-    assert ep._boot_in_flight({"local_runtime": {"enabled": True, "backend": "vulkan"}}) is True
+    assert (
+        ep._boot_in_flight({"local_runtime": {"enabled": True, "backend": "vulkan"}})
+        is True
+    )
 
 
 def test_idle_sweep_unloads_idle_models(tmp_path, monkeypatch, stub_server):
@@ -509,11 +637,13 @@ def test_idle_sweep_unloads_idle_models(tmp_path, monkeypatch, stub_server):
     unload — no exemptions; demand reloads anything the user returns to.
     Idleness is the C5 contract (no busy slots)."""
     port, handler = stub_server
-    handler.models = {"data": [
-        {"id": "model-a", "status": {"value": "loaded"}},
-        {"id": "model-b", "status": {"value": "loaded"}},
-    ]}
-    handler.slots = []          # everyone idle per C5
+    handler.models = {
+        "data": [
+            {"id": "model-a", "status": {"value": "loaded"}},
+            {"id": "model-b", "status": {"value": "loaded"}},
+        ]
+    }
+    handler.slots = []  # everyone idle per C5
     handler.requests_processing = 0
     handler.unloaded = []
 
@@ -528,7 +658,10 @@ def test_idle_sweep_unloads_idle_models(tmp_path, monkeypatch, stub_server):
     # Before the threshold: still nothing.
     assert sup.sweep_idle(now=t0 + sup.IDLE_UNLOAD_S - 1) == []
     # Past the threshold: both idle models unload.
-    assert sorted(sup.sweep_idle(now=t0 + sup.IDLE_UNLOAD_S + 1)) == ["model-a", "model-b"]
+    assert sorted(sup.sweep_idle(now=t0 + sup.IDLE_UNLOAD_S + 1)) == [
+        "model-a",
+        "model-b",
+    ]
     assert sorted(handler.unloaded) == ["model-a", "model-b"]
 
 
@@ -544,11 +677,11 @@ def test_idle_sweep_busy_model_resets_clock(tmp_path, monkeypatch, stub_server):
     sup = LlamaServerSupervisor(tmp_path / "i", tmp_path / "m", port=port)
 
     t0 = 1000.0
-    handler.slots = []                 # idle: clock starts
+    handler.slots = []  # idle: clock starts
     assert sup.sweep_idle(now=t0) == []
-    handler.slots = [{"is_processing": True}]   # busy mid-window
+    handler.slots = [{"is_processing": True}]  # busy mid-window
     assert sup.sweep_idle(now=t0 + sup.IDLE_UNLOAD_S) == []
-    handler.slots = []                 # idle again: clock restarts, not expired
+    handler.slots = []  # idle again: clock restarts, not expired
     assert sup.sweep_idle(now=t0 + sup.IDLE_UNLOAD_S + 10) == []
     assert handler.unloaded == []
 
@@ -697,7 +830,8 @@ def test_switch_model_explicit_llamacpp_provider(tmp_path, monkeypatch, stub_ser
     from hermes_cli.local_runtime.supervisor import state_path
 
     _write_current_process_state(
-        state_path(), base_url=f"http://127.0.0.1:{port}/v1", api_key="sk-managed")
+        state_path(), base_url=f"http://127.0.0.1:{port}/v1", api_key="sk-managed"
+    )
 
     from hermes_cli.model_switch import switch_model
 
@@ -721,7 +855,8 @@ def test_runtime_provider_seam_llamacpp_alias(tmp_path, monkeypatch, stub_server
     from hermes_cli.local_runtime.supervisor import state_path
 
     _write_current_process_state(
-        state_path(), base_url=f"http://127.0.0.1:{port}/v1", api_key="sk-managed")
+        state_path(), base_url=f"http://127.0.0.1:{port}/v1", api_key="sk-managed"
+    )
 
     from hermes_cli.runtime_provider import _resolve_named_custom_runtime
 
@@ -749,7 +884,9 @@ def test_configured_llamacpp_provider_wins_over_managed_alias(tmp_path, monkeypa
     )
 
     def _managed_alias_must_not_run(*args, **kwargs):
-        raise AssertionError("configured providers.llamacpp must resolve before managed detection")
+        raise AssertionError(
+            "configured providers.llamacpp must resolve before managed detection"
+        )
 
     monkeypatch.setattr(
         "hermes_cli.local_runtime.endpoint.resolve_llamacpp_endpoint",
@@ -772,15 +909,22 @@ def test_runtime_provider_seam_explicit_base_url_wins(tmp_path, monkeypatch):
     from hermes_cli.local_runtime.supervisor import state_path
 
     state_path().parent.mkdir(parents=True, exist_ok=True)
-    state_path().write_text(json.dumps({
-        "base_url": "http://127.0.0.1:1/v1", "api_key": "sk-managed", "pid": 1,
-    }), encoding="utf-8")
+    state_path().write_text(
+        json.dumps(
+            {
+                "base_url": "http://127.0.0.1:1/v1",
+                "api_key": "sk-managed",
+                "pid": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
 
     from hermes_cli.runtime_provider import _resolve_named_custom_runtime
 
     runtime = _resolve_named_custom_runtime(
-        requested_provider="llamacpp",
-        explicit_base_url="http://127.0.0.1:9999/v1")
+        requested_provider="llamacpp", explicit_base_url="http://127.0.0.1:9999/v1"
+    )
     assert runtime is not None
     assert runtime["base_url"] == "http://127.0.0.1:9999/v1"
     assert runtime["source"] != "local-runtime"
@@ -804,43 +948,59 @@ def test_staged_local_model_resolves_without_a_running_server(tmp_path, monkeypa
     from hermes_cli.providers import LLAMACPP_PROVIDER_ID, resolve_provider_full
 
     pdef = resolve_provider_full(LLAMACPP_PROVIDER_ID, {}, [])
-    assert pdef is not None, "staged model, but the picker's own provider id does not resolve"
+    assert pdef is not None, (
+        "staged model, but the picker's own provider id does not resolve"
+    )
     assert pdef.id == LLAMACPP_PROVIDER_ID
 
     from hermes_cli.model_switch import switch_model
 
-    result = switch_model("Qwen3.8-27B-IQ3_S-mtp", current_provider="nous",
-                          current_model="Hermes-4.5", current_base_url="",
-                          explicit_provider=LLAMACPP_PROVIDER_ID)
+    result = switch_model(
+        "Qwen3.8-27B-IQ3_S-mtp",
+        current_provider="nous",
+        current_model="Hermes-4.5",
+        current_base_url="",
+        explicit_provider=LLAMACPP_PROVIDER_ID,
+    )
     assert result.success is False  # no server anywhere; the seam reports it
     error = result.error_message or ""
     assert "Unknown provider" not in error
     assert "local model server" in error.lower(), error
 
 
-def test_external_server_on_a_configured_detect_port_is_used(tmp_path, monkeypatch, stub_server):
+def test_external_server_on_a_configured_detect_port_is_used(
+    tmp_path, monkeypatch, stub_server
+):
     """A llama-server the user runs on a fixed non-default port is what `provider: llamacpp` resolves
     to when that port is declared in local_runtime.detect_ports — the knob is documented for exactly
     this, and every provider path called the endpoint resolver without a config (#116143, #116249)."""
     port, handler = stub_server
-    handler.props = {"build_info": "b10964-test", "model_path": "/models/ext-model.gguf",
-                     "default_generation_settings": {"n_ctx": 4096}}
+    handler.props = {
+        "build_info": "b10964-test",
+        "model_path": "/models/ext-model.gguf",
+        "default_generation_settings": {"n_ctx": 4096},
+    }
     handler.models = {"data": [{"id": "ext-model", "owned_by": "llamacpp"}]}
     home = tmp_path / ".hermes"
     monkeypatch.setenv("HERMES_HOME", str(home))
     _stage_local_model(home, "ext-model")
     (home / "config.yaml").write_text(
-        f"local_runtime:\n  enabled: false\n  detect_ports: [{port}]\n", encoding="utf-8")
+        f"local_runtime:\n  enabled: false\n  detect_ports: [{port}]\n",
+        encoding="utf-8",
+    )
     monkeypatch.setattr("hermes_cli.local_runtime.detect.DEFAULT_PROBE_PORTS", ())
 
     from hermes_cli.model_switch import switch_model
 
-    result = switch_model("ext-model", current_provider="nous", current_model="Hermes-4.5",
-                          current_base_url="", explicit_provider="llamacpp")
+    result = switch_model(
+        "ext-model",
+        current_provider="nous",
+        current_model="Hermes-4.5",
+        current_base_url="",
+        explicit_provider="llamacpp",
+    )
     assert result.success, result.error_message
     assert result.base_url == f"http://127.0.0.1:{port}/v1"
-
-
 
 
 # ── bootstrap contracts ──────────────────────────────────────
@@ -866,14 +1026,22 @@ def test_bootstrap_reuses_running_server(tmp_path, monkeypatch, stub_server):
 
     monkeypatch.setattr(bootstrap, "_SUPERVISOR", None)
     state_path().parent.mkdir(parents=True, exist_ok=True)
-    state_path().write_text(json.dumps({
-        "base_url": f"http://127.0.0.1:{port}/v1", "api_key": "k", "pid": os.getpid(),
-    }), encoding="utf-8")
+    state_path().write_text(
+        json.dumps(
+            {
+                "base_url": f"http://127.0.0.1:{port}/v1",
+                "api_key": "k",
+                "pid": os.getpid(),
+            }
+        ),
+        encoding="utf-8",
+    )
 
     called = []
     monkeypatch.setattr(
         "hermes_cli.local_runtime.binaries.installed_engine",
-        lambda *a, **k: called.append(1))
+        lambda *a, **k: called.append(1),
+    )
     assert bootstrap.ensure_local_runtime({"local_runtime": {"enabled": True}}) is None
     assert called == []
 
@@ -893,8 +1061,7 @@ def test_bootstrap_failure_never_raises(tmp_path, monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("no network")
 
-    monkeypatch.setattr(
-        "hermes_cli.local_runtime.binaries.installed_engine", boom)
+    monkeypatch.setattr("hermes_cli.local_runtime.binaries.installed_engine", boom)
     result = bootstrap.ensure_local_runtime({"local_runtime": {"enabled": True}})
     assert result is None  # no exception escaped
 
@@ -919,8 +1086,11 @@ def test_ensure_local_runtime_serializes_racing_callers(tmp_path, monkeypatch):
     monkeypatch.setattr(bootstrap, "_presets_stale", lambda: False)
     monkeypatch.setattr(bootstrap, "_detect_gpu_vendor", lambda: None)
     from hermes_cli.local_runtime.binaries import Engine
-    monkeypatch.setattr("hermes_cli.local_runtime.binaries.installed_engine",
-                        lambda backend: Engine("cpu", "b1", tmp_path / "llama-server"))
+
+    monkeypatch.setattr(
+        "hermes_cli.local_runtime.binaries.installed_engine",
+        lambda backend: Engine("cpu", "b1", tmp_path / "llama-server"),
+    )
 
     spawns = []
 
@@ -940,7 +1110,8 @@ def test_ensure_local_runtime_serializes_racing_callers(tmp_path, monkeypatch):
             # A bare legacy ``{pid}`` record is no longer adoptable (a live PID is not evidence);
             # publish what a real router publishes so the second caller can adopt it.
             _write_current_process_state(
-                sup_mod.state_path(), base_url=self.base_url, api_key=self.api_key)
+                sup_mod.state_path(), base_url=self.base_url, api_key=self.api_key
+            )
 
     monkeypatch.setattr(sup_mod, "LlamaServerSupervisor", _FakeSupervisor)
 
@@ -949,7 +1120,9 @@ def test_ensure_local_runtime_serializes_racing_callers(tmp_path, monkeypatch):
 
     def _boot():
         barrier.wait()
-        results.append(bootstrap.ensure_local_runtime({"local_runtime": {"enabled": True}}))
+        results.append(
+            bootstrap.ensure_local_runtime({"local_runtime": {"enabled": True}})
+        )
 
     threads = [threading.Thread(target=_boot) for _ in range(2)]
     for t in threads:
@@ -959,10 +1132,13 @@ def test_ensure_local_runtime_serializes_racing_callers(tmp_path, monkeypatch):
 
     assert len(spawns) == 1, (
         "both racing callers spawned a router instead of the second adopting the "
-        "first's published state (#116682)")
+        "first's published state (#116682)"
+    )
 
 
-def test_ensure_local_runtime_proceeds_when_boot_lock_is_unwritable(tmp_path, monkeypatch, caplog):
+def test_ensure_local_runtime_proceeds_when_boot_lock_is_unwritable(
+    tmp_path, monkeypatch, caplog
+):
     """The boot lock lives outside the body's ``try/except``: an unwritable runtimes dir must
     degrade to a warning and an unlocked boot, never an OSError out of session start."""
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
@@ -974,9 +1150,15 @@ def test_ensure_local_runtime_proceeds_when_boot_lock_is_unwritable(tmp_path, mo
     (mdir / "stub-Q4_K_M.gguf").touch()
     blocker = tmp_path / "not-a-dir"
     blocker.write_text("", encoding="utf-8")
-    monkeypatch.setattr(bootstrap, "runtimes_root", lambda: blocker / "runtimes")  # mkdir -> OSError
-    monkeypatch.setattr("hermes_cli.local_runtime.endpoint._state_endpoint", lambda: None)
-    monkeypatch.setattr("hermes_cli.local_runtime.binaries.installed_engine", lambda backend: None)
+    monkeypatch.setattr(
+        bootstrap, "runtimes_root", lambda: blocker / "runtimes"
+    )  # mkdir -> OSError
+    monkeypatch.setattr(
+        "hermes_cli.local_runtime.endpoint._state_endpoint", lambda: None
+    )
+    monkeypatch.setattr(
+        "hermes_cli.local_runtime.binaries.installed_engine", lambda backend: None
+    )
 
     with caplog.at_level(logging.WARNING, logger=bootstrap.logger.name):
         result = bootstrap.ensure_local_runtime({"local_runtime": {"enabled": True}})
@@ -998,11 +1180,17 @@ def test_boot_prices_the_engine_it_serves(tmp_path, monkeypatch):
     models = bootstrap.models_dir()
     models.mkdir(parents=True, exist_ok=True)
     (models / "test.gguf").touch()
-    vulkan = SimpleNamespace(backend="vulkan", tag="b1", binary=tmp_path / "llama-server")
-    monkeypatch.setattr("hermes_cli.local_runtime.binaries.installed_engine",
-                        lambda backend="auto": vulkan if backend == "vulkan" else None)
-    monkeypatch.setattr("hermes_cli.config.load_config_readonly",
-                        lambda: {"local_runtime": {"backend": "cpu"}})  # another profile's config
+    vulkan = SimpleNamespace(
+        backend="vulkan", tag="b1", binary=tmp_path / "llama-server"
+    )
+    monkeypatch.setattr(
+        "hermes_cli.local_runtime.binaries.installed_engine",
+        lambda backend="auto": vulkan if backend == "vulkan" else None,
+    )
+    monkeypatch.setattr(
+        "hermes_cli.config.load_config_readonly",
+        lambda: {"local_runtime": {"backend": "cpu"}},
+    )  # another profile's config
     priced: list = []
 
     def _priced(mdir, path, residents=1, engine_tag=None):
@@ -1011,8 +1199,13 @@ def test_boot_prices_the_engine_it_serves(tmp_path, monkeypatch):
 
     monkeypatch.setattr(bootstrap, "_generate_presets", _priced)
     capped: list = []
-    monkeypatch.setattr(bootstrap, "_admitted_models_max",
-                        lambda mdir, configured, engine_tag=None: capped.append(engine_tag) or configured)
+    monkeypatch.setattr(
+        bootstrap,
+        "_admitted_models_max",
+        lambda mdir, configured, engine_tag=None: (
+            capped.append(engine_tag) or configured
+        ),
+    )
 
     class _NoStart:
         def __init__(self, *a, **k):
@@ -1024,10 +1217,19 @@ def test_boot_prices_the_engine_it_serves(tmp_path, monkeypatch):
         def stop(self):
             pass
 
-    monkeypatch.setattr("hermes_cli.local_runtime.supervisor.LlamaServerSupervisor", _NoStart)
+    monkeypatch.setattr(
+        "hermes_cli.local_runtime.supervisor.LlamaServerSupervisor", _NoStart
+    )
 
-    assert bootstrap.ensure_local_runtime({"local_runtime": {"enabled": True, "backend": "vulkan"}}) is None
+    assert (
+        bootstrap.ensure_local_runtime(
+            {"local_runtime": {"enabled": True, "backend": "vulkan"}}
+        )
+        is None
+    )
     # The release reaches the presets too: drafts gate on the engine that will load them.
     assert priced == [(vulkan, "b1")]
-    assert capped == ["b1"]  # the residency cap prices the draft only where this engine loads it
+    assert capped == [
+        "b1"
+    ]  # the residency cap prices the draft only where this engine loads it
     assert bootstrap.serving_engine() is None  # a failed boot serves nothing

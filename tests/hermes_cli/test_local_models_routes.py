@@ -192,7 +192,15 @@ def test_hardware_keeps_nvidia_when_both_answer(client, monkeypatch):
     from hermes_cli.web_routers import local_models
 
     monkeypatch.setattr(
-        local_models, "_nvidia_smi_facts", lambda: {"gpu_name": "NVIDIA RTX 4090", "gpu_util_percent": 63, "vram_used_bytes": 1}
+        local_models,
+        "_nvidia_smi_facts",
+        lambda: {
+            "gpu_name": "NVIDIA RTX 4090",
+            "gpu_util_percent": 63,
+            "vram_used_bytes": 1,
+            "gpu_mhz": 2745,
+            "gpu_mhz_max": 2745,
+        },
     )
     monkeypatch.setattr(
         local_models, "_intel_gpu_facts", lambda: {"gpu_name": "Intel iGPU", "gpu_util_percent": 3.0}
@@ -201,6 +209,8 @@ def test_hardware_keeps_nvidia_when_both_answer(client, monkeypatch):
     data = client.get("/api/local-models/hardware").json()
 
     assert data["gpu_name"] == "NVIDIA RTX 4090"
+    # The status-bar clock row reads these, so the merge must not drop them.
+    assert data["gpu_mhz"] == 2745
 
 
 # ── catalog ──────────────────────────────────────────────────

@@ -600,6 +600,9 @@ def _nvidia_smi_facts() -> dict:
         gpu_name=query["gpu_name"],
         gpu_util_percent=query["gpu_util_percent"],
         vram_used_bytes=query["used_bytes"],
+        # GT clock: the status-bar readout shows it beside the adapter name.
+        gpu_mhz=query.get("gpu_mhz"),
+        gpu_mhz_max=query.get("gpu_mhz_max"),
     )
 
 

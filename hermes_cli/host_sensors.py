@@ -8,7 +8,12 @@ Two sources, in order of preference:
    physical host's numbers have to be sampled from outside and dropped here.
    A file younger than ``_DROP_MAX_AGE_S`` wins over local probing.
 2. The local machine: a ``/proc/stat`` delta, hwmon core temperatures and the
-   first hwmon fan tach (the EC tach pair when no hwmon fan node exists).
+   first hwmon fan tach (the EC tach pair when no hwmon fan node exists), plus
+   the CPU's marketing name (``/proc/cpuinfo``, sysctl or the Windows registry).
+
+The CPU model is the one field the sidecar need not carry: a container's
+``/proc/cpuinfo`` still names the physical CPU, so it is backfilled locally when
+the drop file omits it.
 
 Everything is best-effort and read-only: each field may be ``None``, and a
 missing file, hwmon node or unreadable EC never raises into the endpoint.
@@ -19,6 +24,8 @@ from __future__ import annotations
 import glob
 import json
 import os
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -83,7 +90,9 @@ def _local_cpu_percent() -> float | None:
         prev = _prev_stat
         _prev_stat = (busy, total)
     if prev is not None and total > prev[1]:
-        pct = round(max(0.0, min(100.0, 100.0 * (busy - prev[0]) / (total - prev[1]))), 1)
+        pct = round(
+            max(0.0, min(100.0, 100.0 * (busy - prev[0]) / (total - prev[1]))), 1
+        )
     return pct
 
 
@@ -132,6 +141,63 @@ def _local_fan() -> int | None:
     return rpm if 0 < rpm < 20000 else None
 
 
+def _local_cpu_model() -> str | None:
+    """The CPU's marketing name ("Intel(R) Core(TM) i5-7260U CPU @ 2.20GHz")."""
+    # Linux (x86 names it "model name"; ARM boards use Hardware/Model).
+    cpuinfo = _read("/proc/cpuinfo")
+    if cpuinfo:
+        # x86 says "model name", most ARM boards "Hardware"/"Model". Bare "model"
+        # is the x86 *number* (e.g. "142"), so it is only trusted when it carries
+        # letters — that keeps ARM working without printing "142" on a laptop.
+        named, numbered = ("model name", "cpu model", "hardware"), None
+        for line in cpuinfo.splitlines():
+            key, _, value = line.partition(":")
+            key, value = key.strip().lower(), value.strip()
+            if not value:
+                continue
+            if key in named:
+                return value
+            if (
+                key == "model"
+                and numbered is None
+                and any(ch.isalpha() for ch in value)
+            ):
+                numbered = value
+        if numbered:
+            return numbered
+
+    if sys.platform == "darwin":
+        try:
+            done = subprocess.run(
+                ["sysctl", "-n", "machdep.cpu.brand_string"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=False,
+            )
+            name = done.stdout.strip()
+            if name:
+                return name
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    if sys.platform == "win32":
+        try:
+            import winreg
+
+            with winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                r"HARDWARE\DESCRIPTION\System\CentralProcessor\0",
+            ) as key:
+                name, _ = winreg.QueryValueEx(key, "ProcessorNameString")
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+        except (OSError, ImportError):
+            pass
+
+    return None
+
+
 def _local_mhz() -> int | None:
     values = []
     for path in glob.glob("/sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_cur_freq"):
@@ -163,8 +229,8 @@ def read_host_sensors(ttl_s: float = _CACHE_TTL_S) -> dict[str, Any]:
     """Fresh-enough CPU / thermal / fan facts, or ``{}`` when nothing can be read.
 
     Keys: ``cpu_util_percent``, ``load1``, ``cpu_mhz``, ``cpu_temp_c``, ``fan_rpm``,
-    ``cores`` and ``source`` (``"host"`` for the drop file, ``"local"`` for in-process
-    probing). Cached for ``ttl_s`` so a 5 s status-bar poll costs one probe.
+    ``cores``, ``cpu_model`` and ``source`` (``"host"`` for the drop file, ``"local"``
+    for in-process probing). Cached for ``ttl_s`` so a 5 s status-bar poll costs one probe.
     """
     global _cache
     now = time.monotonic()
@@ -174,6 +240,12 @@ def read_host_sensors(ttl_s: float = _CACHE_TTL_S) -> dict[str, Any]:
 
     payload = _read_drop()
     if payload is not None:
+        if not payload.get("cpu_model"):
+            # The sidecar predates this field (and a container still sees the
+            # host's /proc/cpuinfo), so fill it in rather than show nothing.
+            model = _local_cpu_model()
+            if model:
+                payload["cpu_model"] = model
         payload.setdefault("source", "host")
         _cache = (now, payload)
         return payload
@@ -185,6 +257,7 @@ def read_host_sensors(ttl_s: float = _CACHE_TTL_S) -> dict[str, Any]:
         "cpu_temp_c": _local_temps(),
         "fan_rpm": _local_fan(),
         "cores": _local_cores(),
+        "cpu_model": _local_cpu_model(),
         "source": "local",
     }
     _cache = (now, local)

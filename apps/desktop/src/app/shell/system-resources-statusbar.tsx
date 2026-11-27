@@ -165,6 +165,14 @@ export function useSystemResourcesStatusbarItem(): StatusbarItem {
           )}
         </div>
 
+        {/* Which CPU these numbers describe. Truncated with the full name in the
+            tooltip: a 40-character marketing string never fits the 16rem panel. */}
+        {host?.cpu_model && (
+          <p className="min-w-0 truncate text-[0.6875rem] text-muted-foreground" title={host.cpu_model}>
+            {host.cpu_model}
+          </p>
+        )}
+
         {/* Measured utilization only — no placeholder. An Intel iGPU here has no
             perf access (perfmon_capable() resolves against the host's user
             namespace, so perf_event_open is EPERM even for container root), and a

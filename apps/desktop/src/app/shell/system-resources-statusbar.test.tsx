@@ -21,6 +21,16 @@ const { getLocalHardware, hardwareFixture } = vi.hoisted(() => {
     // Intel path: utilization may be unknown, the clock usually is not.
     gpu_mhz: 300,
     gpu_mhz_max: 950,
+    host: {
+      cpu_util_percent: 12,
+      load1: 0.65,
+      cpu_mhz: 3400,
+      cpu_temp_c: 55,
+      fan_rpm: 1119,
+      cores: 4,
+      cpu_model: 'Intel(R) Core(TM) i5-7260U CPU @ 2.20GHz',
+      source: 'host' as const
+    },
     uma: false
   }
 
@@ -142,6 +152,12 @@ describe('system-resources statusbar polling', () => {
     expect(await screen.findByText('GPU clock')).toBeTruthy()
     expect(screen.queryByText('GPU utilization')).toBeNull()
     expect(screen.queryByText('—')).toBeNull()
+  })
+
+  it('names the CPU those numbers came from', async () => {
+    await renderMenu()
+
+    expect(await screen.findByText('Intel(R) Core(TM) i5-7260U CPU @ 2.20GHz')).toBeTruthy()
   })
 
   it('carries RAM usage alone in the outer label, whatever else the host reports', async () => {

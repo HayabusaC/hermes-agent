@@ -1564,6 +1564,8 @@ export interface HostSensors {
   cpu_temp_c: number | null
   fan_rpm: number | null
   cores: number | null
+  /** The CPU's marketing name; absent on sidecars written before the field. */
+  cpu_model?: string | null
   /** `host` = sampled from the physical machine behind the gateway, `local` = this process' own view. */
   source?: 'host' | 'local'
 }

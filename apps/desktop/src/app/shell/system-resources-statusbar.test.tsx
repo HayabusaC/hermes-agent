@@ -1,4 +1,4 @@
-import { act, render, renderHook, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { $localModelsEnabled } from '@/store/local-models-flag'
@@ -134,24 +134,32 @@ describe('system-resources statusbar polling', () => {
     expect(screen.getByText('300 / 950 MHz')).toBeTruthy()
   })
 
-  it('paints GPU utilization only when the adapter measures it', async () => {
-    getLocalHardware.mockResolvedValue({ ...hardwareFixture, gpu_util_percent: 63 })
+  it('never paints a GPU utilization row, whatever the adapter reports', async () => {
+    // Not even a measured number: the row was removed on request, and a backend
+    // that reports 0 (an iGPU with no real counter) must not resurrect it.
+    for (const percent of [63, 0, null]) {
+      getLocalHardware.mockResolvedValue({ ...hardwareFixture, gpu_util_percent: percent })
 
-    await renderMenu()
+      await renderMenu()
 
-    expect(await screen.findByText('GPU utilization')).toBeTruthy()
-    expect(screen.getByText('63%')).toBeTruthy()
+      expect(await screen.findByText('GPU clock')).toBeTruthy()
+      expect(screen.queryByText('GPU utilization')).toBeNull()
+      if (percent !== null) {
+        expect(screen.queryByText(`${percent}%`)).toBeNull()
+      }
+
+      cleanup()
+    }
   })
 
-  it('omits the utilization row entirely when no counter is available', async () => {
-    // The Intel iGPU case: a named adapter and a clock, no perf access at all.
-    getLocalHardware.mockResolvedValue({ ...hardwareFixture, gpu_util_percent: null })
-
+  it('stacks the title, the CPU model and the GPU model', async () => {
     await renderMenu()
 
-    expect(await screen.findByText('GPU clock')).toBeTruthy()
-    expect(screen.queryByText('GPU utilization')).toBeNull()
-    expect(screen.queryByText('—')).toBeNull()
+    const lines = screen
+      .getAllByText(/System Resources|Intel\(R\) Core|NVIDIA Test GPU/)
+      .map(node => node.textContent)
+
+    expect(lines).toEqual(['System Resources', 'Intel(R) Core(TM) i5-7260U CPU @ 2.20GHz', 'NVIDIA Test GPU'])
   })
 
   it('names the CPU those numbers came from', async () => {

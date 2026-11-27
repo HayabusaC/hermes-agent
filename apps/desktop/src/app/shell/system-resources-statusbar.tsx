@@ -120,8 +120,6 @@ export function useSystemResourcesStatusbarItem(): StatusbarItem {
     }
   }, [shown])
 
-  const hasGpu = Boolean(hardware?.gpu_name)
-
   const vramPercent =
     hardware?.vram_used_bytes != null && hardware.vram_total_bytes
       ? Math.round((hardware.vram_used_bytes / hardware.vram_total_bytes) * 100)
@@ -157,39 +155,29 @@ export function useSystemResourcesStatusbarItem(): StatusbarItem {
             props the track open past the w-64 box and overflow-x:hidden
             shears off every right-aligned value. With the track clamped,
             `truncate` can finally act. */}
-        <div className="flex min-w-0 items-baseline justify-between gap-2">
-          <p className="shrink-0 font-medium text-foreground">{copy.title}</p>
+        {/* Three stacked lines: what this panel is, then the CPU and the GPU it
+            describes. Both names are long marketing strings, so each truncates
+            with the full text in its tooltip — 16rem fits neither. */}
+        <div className="grid min-w-0 gap-0.5">
+          <p className="font-medium text-foreground">{copy.title}</p>
+
+          {host?.cpu_model && (
+            <p className="min-w-0 truncate text-[0.6875rem] text-muted-foreground" title={host.cpu_model}>
+              {host.cpu_model}
+            </p>
+          )}
 
           {hardware?.gpu_name && (
-            <span className="min-w-0 truncate text-[0.6875rem] text-muted-foreground">{hardware.gpu_name}</span>
+            <p className="min-w-0 truncate text-[0.6875rem] text-muted-foreground" title={hardware.gpu_name}>
+              {hardware.gpu_name}
+            </p>
           )}
         </div>
-
-        {/* Which CPU these numbers describe. Truncated with the full name in the
-            tooltip: a 40-character marketing string never fits the 16rem panel. */}
-        {host?.cpu_model && (
-          <p className="min-w-0 truncate text-[0.6875rem] text-muted-foreground" title={host.cpu_model}>
-            {host.cpu_model}
-          </p>
-        )}
-
-        {/* Measured utilization only — no placeholder. An Intel iGPU here has no
-            perf access (perfmon_capable() resolves against the host's user
-            namespace, so perf_event_open is EPERM even for container root), and a
-            row that reads "—" every time is noise, not information. Where a
-            number exists (NVIDIA, or Intel with perf access) the row appears. */}
-        {hardware?.gpu_util_percent != null && (
-          <MeterRow
-            label={copy.gpuUtilization}
-            percent={hardware.gpu_util_percent}
-            value={`${Math.round(hardware.gpu_util_percent)}%`}
-          />
-        )}
 
         {/* Dedicated VRAM only. An Intel iGPU reports the adapter but no
             per-adapter memory figure (it shares system RAM), so the row would
             read "— / 16 GB" — the RAM row already tells that story. */}
-        {hasGpu && hardware?.vram_used_bytes != null && (
+        {hardware?.vram_used_bytes != null && (
           <MeterRow
             label={copy.gpuMemory}
             percent={vramPercent}

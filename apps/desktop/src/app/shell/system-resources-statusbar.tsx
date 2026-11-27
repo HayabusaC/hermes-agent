@@ -137,35 +137,10 @@ export function useSystemResourcesStatusbarItem(): StatusbarItem {
   const cpuTemp = host?.cpu_temp_c ?? null
   const fanRpm = host?.fan_rpm ?? null
 
-  // Compact bar label: the numbers a local-inference user glances at, plus the
-  // physical machine's CPU / temperature / fan when the backend reports them
-  // (the host block; absent on older backends).
-  // "GPU 34% · 18G/32G" with a GPU; "RAM 41G/256G" without.
-  const labelParts: string[] = []
-
-  if (hardware) {
-    labelParts.push(
-      hasGpu
-        ? `GPU ${hardware.gpu_util_percent ?? 0}%${
-            hardware.vram_used_bytes != null ? ` · ${gb(hardware.vram_used_bytes)}/${gb(hardware.vram_total_bytes)}` : ''
-          }`
-        : `RAM ${gb(ramUsed)}/${gb(hardware.ram_total_bytes)}`
-    )
-
-    if (cpuPercent != null) {
-      labelParts.push(`CPU ${Math.round(cpuPercent)}%`)
-    }
-
-    if (cpuTemp != null) {
-      labelParts.push(`${cpuTemp}°C`)
-    }
-
-    if (fanRpm != null) {
-      labelParts.push(`${fanRpm} rpm`)
-    }
-  }
-
-  const label = hardware ? labelParts.join(' · ') : copy.loading
+  // Outer bar label: RAM only. Everything else (GPU utilization, VRAM, CPU,
+  // temperature, fan, load) stays in the dropdown — the chip has room for one
+  // fact, and resident-memory usage is the one worth watching at a glance.
+  const label = hardware ? `RAM ${gb(ramUsed)}/${gb(hardware.ram_total_bytes)}` : copy.loading
 
   return {
     detail: undefined,

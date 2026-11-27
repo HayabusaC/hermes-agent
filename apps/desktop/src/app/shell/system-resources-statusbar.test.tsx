@@ -11,11 +11,13 @@ const { getLocalHardware } = vi.hoisted(() => ({
   getLocalHardware: vi.fn().mockResolvedValue({
     gpu_name: 'NVIDIA Test GPU',
     gpu_util_percent: 10,
-    vram_total_bytes: 8 << 30,
-    vram_used_bytes: 1 << 30,
-    vram_usable_bytes: 6 << 30,
-    ram_total_bytes: 32 << 30,
-    ram_available_bytes: 16 << 30,
+    // Plain multiplication, not `8 << 30`: a left shift is int32, so 8/16/32 GB
+    // silently become 0 and every meter reads as an empty machine.
+    vram_total_bytes: 8 * 2 ** 30,
+    vram_used_bytes: 1 * 2 ** 30,
+    vram_usable_bytes: 6 * 2 ** 30,
+    ram_total_bytes: 32 * 2 ** 30,
+    ram_available_bytes: 16 * 2 ** 30,
     uma: false
   })
 }))
@@ -36,13 +38,13 @@ describe('system-resources statusbar polling', () => {
     $localModelsEnabled.set(true)
     $statusbarHiddenIds.set([])
 
-    const { unmount } = renderHook(() => useSystemResourcesStatusbarItem())
+    const { result, unmount } = renderHook(() => useSystemResourcesStatusbarItem())
 
     // Mount poll, plus nothing scheduled while the window is visible-but-idle
     // beyond the immediate one (POLL_MS is 5s; the fake timers below avoid it).
     await waitFor(() => expect(getLocalHardware).toHaveBeenCalled())
 
-    return { unmount }
+    return { result, unmount }
   }
 
   it('does not poll while the document is hidden', async () => {
@@ -95,5 +97,13 @@ describe('system-resources statusbar polling', () => {
     })
 
     expect(getLocalHardware).not.toHaveBeenCalled()
+  })
+
+  it('carries RAM usage alone in the outer label, whatever else the host reports', async () => {
+    const { result } = await renderShown()
+
+    // Same shape the polling tests use: 16G of 32G resident, plus a GPU block.
+    await waitFor(() => expect(result.current.label).toBe('RAM 16G/32G'))
+    expect(result.current.label).not.toMatch(/GPU|CPU|°C|rpm|load/i)
   })
 })
